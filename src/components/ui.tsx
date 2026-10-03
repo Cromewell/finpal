@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { numFest, numFlex, parseDezimal, zumBearbeiten } from '../lib/format';
-import { useId, useState } from 'react';
+import { useZahlEntwurf } from './useZahlEntwurf';
+import { useId } from 'react';
 
 /* --- Symbole (Inline-SVG, einheitlich 16 px, currentColor) ---------------- */
 
@@ -192,20 +192,7 @@ export function NumberField({
 }) {
   const auto = useId();
   const id = vorgabe ?? auto;
-
-  // Solange getippt wird, gilt der Rohtext. Dadurch bleiben Zwischenstände wie
-  // "", "3" oder "32," unangetastet — früher wurden sie sofort zu einer Zahl
-  // gerundet und begrenzt, sodass aus "35" über "135" am Ende "60" wurde.
-  const [entwurf, setzeEntwurf] = useState<string | null>(null);
-
-  const begrenze = (wert: number) =>
-    Math.min(max ?? Number.POSITIVE_INFINITY, Math.max(min ?? Number.NEGATIVE_INFINITY, wert));
-
-  const ruhe = () => {
-    if (!gruppiert) return zumBearbeiten(value);
-    return dezimalstellen === undefined ? numFlex(value) : numFest(value, dezimalstellen);
-  };
-  const anzeige = entwurf ?? ruhe();
+  const feld = useZahlEntwurf(value, onChange, { min, max, gruppiert, dezimalstellen });
 
   return (
     <Field label={label} hint={hint} htmlFor={id}>
@@ -216,25 +203,8 @@ export function NumberField({
           type="text"
           inputMode="decimal"
           autoComplete="off"
-          value={anzeige}
           aria-describedby={hint ? `${id}-hint` : undefined}
-          onFocus={() => setzeEntwurf(zumBearbeiten(value))}
-          onChange={(e) => {
-            setzeEntwurf(e.target.value);
-            const geparst = parseDezimal(e.target.value);
-            // Unfertige Eingaben lassen den bisherigen Wert einfach stehen.
-            if (geparst !== null && geparst !== value) onChange(geparst);
-          }}
-          onBlur={() => {
-            const geparst = entwurf === null ? value : parseDezimal(entwurf);
-            setzeEntwurf(null);
-            // Erst jetzt begrenzen — und bei leerem Feld den alten Wert behalten.
-            const endgueltig = begrenze(geparst ?? value);
-            if (endgueltig !== value) onChange(endgueltig);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') e.currentTarget.blur();
-          }}
+          {...feld}
         />
         {unit && <span className="input-affix__unit">{unit}</span>}
       </div>
@@ -272,16 +242,18 @@ export function SelectField<T extends string | number>({
 }
 
 export function Segmented<T extends string | number>({
-  label, hint, value, onChange, options,
+  label, ariaLabel, hint, value, onChange, options,
 }: {
   label?: string;
+  /** Beschriftung für Hilfstechnik, wenn keine sichtbare Beschriftung passt. */
+  ariaLabel?: string;
   hint?: string;
   value: T;
   onChange: (wert: T) => void;
   options: { wert: T; label: string; titel?: string }[];
 }) {
   const inhalt = (
-    <div className="segmented" role="group" aria-label={label}>
+    <div className="segmented" role="group" aria-label={label ?? ariaLabel}>
       {options.map((o) => (
         <button
           key={String(o.wert)}
@@ -341,5 +313,44 @@ export function Insight({ title, children }: { title: string; children: ReactNod
       <span className="insight__title">{title}</span>
       <p className="insight__text">{children}</p>
     </div>
+  );
+}
+
+export function IconPlus({ size = 14 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M8 3.2v9.6M3.2 8h9.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function IconTrash({ size = 14 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M3 4.5h10M6.4 4.5V3.2a.7.7 0 0 1 .7-.7h1.8a.7.7 0 0 1 .7.7v1.3M4.3 4.5l.5 8a1 1 0 0 0 1 .9h4.4a1 1 0 0 0 1-.9l.5-8"
+        stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function IconFlow({ size = 14 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M2 3.5h2.6c1.2 0 2 .8 2.4 2l.8 3c.4 1.2 1.2 2 2.4 2H14"
+        stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <path d="M2 12.5h2.6c1.2 0 2-.8 2.4-2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <path d="M11.8 8.3 14 10.5l-2.2 2.2" stroke="currentColor" strokeWidth="1.3"
+        strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function IconCoin({ size = 14 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="8" cy="8" r="6.3" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M10 5.8A2.2 2.2 0 0 0 8 4.8c-1.1 0-2 .6-2 1.5S6.9 7.7 8 7.7s2 .6 2 1.5-.9 1.5-2 1.5a2.2 2.2 0 0 1-2-1M8 3.6v8.8"
+        stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
   );
 }

@@ -219,15 +219,22 @@ button { font: inherit; color: inherit; }
   box-shadow: 0 1px 2px rgba(11, 11, 11, 0.07);
 }
 
-@media (max-width: 560px) {
-  .tabs { display: flex; width: 100%; }
-  .tab { flex: 1; padding: 9px 10px; font-size: 13px; }
+/* Ab vier Reitern passen die ausgeschriebenen Namen nicht mehr nebeneinander;
+   darunter bleibt nur das Kernwort stehen. */
+@media (max-width: 900px) {
+  .tab__lang { display: none; }
 }
 
-/* Auf schmalen Geräten bleibt nur das Kernwort stehen, damit die Reiter
-   nebeneinander passen und die Seite nicht waagerecht scrollt. */
-@media (max-width: 420px) {
-  .tab__lang { display: none; }
+@media (max-width: 560px) {
+  .tabs { display: flex; width: 100%; }
+  .tab { flex: 1; padding: 9px 8px; font-size: 13px; }
+}
+
+/* Ganz schmal reicht auch eine Zeile nicht: zwei mal zwei statt waagerecht
+   scrollen — so bleibt jeder Reiter sichtbar und erreichbar. */
+@media (max-width: 440px) {
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  .tab { padding: 9px 6px; }
 }
 
 /* --- Layout zweispaltig -------------------------------------------------- */
@@ -594,4 +601,118 @@ table.ledger tbody tr.row-highlight:hover td { background: var(--accent-wash); }
   .layout { grid-template-columns: 1fr; }
   .layout__inputs { position: static; }
   .card { box-shadow: none; border-color: #ccc; break-inside: avoid; }
+}
+
+/* --- Geldfluss (Sankey) --------------------------------------------------- */
+
+:root {
+  /* Farbe kodiert hier die Rolle — Einnahme, Ausgabe, Überschuss —, nicht die
+     einzelne Kategorie: Einzelposten tragen ihren Namen direkt am Knoten.
+     Das Trio ist über alle Paare hinweg auf Farbfehlsichtigkeit geprüft. */
+  --fluss-einnahme: #1baf7a;
+  --fluss-ausgabe: #eb6834;
+  --fluss-unterposten: #ef8a61;
+  --fluss-ueberschuss: #2a78d6;
+  --fluss-fehlbetrag: #d03b3b;
+  --fluss-gesamt: #7c7a74;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='hell']) {
+    --fluss-einnahme: #199e70;
+    --fluss-ausgabe: #d95926;
+    --fluss-unterposten: #a04622;
+    --fluss-ueberschuss: #3987e5;
+    --fluss-fehlbetrag: #d03b3b;
+    --fluss-gesamt: #6e6c67;
+  }
+}
+
+:root[data-theme='dunkel'] {
+  --fluss-einnahme: #199e70;
+  --fluss-ausgabe: #d95926;
+  --fluss-unterposten: #a04622;
+  --fluss-ueberschuss: #3987e5;
+  --fluss-fehlbetrag: #d03b3b;
+  --fluss-gesamt: #6e6c67;
+}
+
+.sankey { position: relative; }
+.sankey__scroll { overflow-x: auto; overflow-y: hidden; margin: 0 -4px; padding: 0 4px; }
+.sankey svg { display: block; }
+.sankey__leer { font-size: 14px; color: var(--ink-muted); padding: 32px 0; text-align: center; }
+.sankey__hinweis { font-size: 12px; color: var(--ink-muted); margin-top: 8px; }
+
+.sankey__band {
+  opacity: 0.34;
+  transition: opacity 140ms ease;
+}
+.sankey__band:hover { opacity: 0.56; }
+.sankey__band.is-zurueck { opacity: 0.1; }
+
+/* Auf dunklem Grund schluckt die Transparenz mehr Farbe — etwas kräftiger. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='hell']) .sankey__band { opacity: 0.46; }
+  :root:not([data-theme='hell']) .sankey__band:hover { opacity: 0.68; }
+  :root:not([data-theme='hell']) .sankey__band.is-zurueck { opacity: 0.14; }
+}
+:root[data-theme='dunkel'] .sankey__band { opacity: 0.46; }
+:root[data-theme='dunkel'] .sankey__band:hover { opacity: 0.68; }
+:root[data-theme='dunkel'] .sankey__band.is-zurueck { opacity: 0.14; }
+
+.sankey__knoten { transition: opacity 140ms ease; }
+.sankey__knoten.is-zurueck { opacity: 0.25; }
+
+.sankey__labels { pointer-events: none; }
+.sankey__label {
+  font-size: 12px;
+  /* Heller Saum in Flächenfarbe, damit die Schrift über den Bändern lesbar
+     bleibt — ohne dass ein Kasten die Zeichnung zerschneidet. */
+  paint-order: stroke fill;
+  stroke: var(--surface);
+  stroke-width: 3.5px;
+  stroke-linejoin: round;
+}
+.sankey__label-name { fill: var(--ink); font-weight: 600; }
+.sankey__label-wert { fill: var(--ink-secondary); font-variant-numeric: tabular-nums; }
+
+/* --- Posten-Eingabe ------------------------------------------------------- */
+
+.posten-liste { display: grid; gap: 8px; }
+
+.posten { display: grid; grid-template-columns: minmax(0, 1fr) 104px 30px; gap: 6px; align-items: center; }
+.posten--kind { padding-left: 16px; position: relative; }
+.posten--kind::before {
+  content: ''; position: absolute; left: 5px; top: -4px; bottom: 50%;
+  border-left: 1px solid var(--line-strong); border-bottom: 1px solid var(--line-strong);
+  width: 6px; border-bottom-left-radius: 4px;
+}
+.posten .control { padding: 8px 10px; font-size: 14px; }
+.posten__betrag .control { padding-right: 26px; text-align: right; }
+.posten__betrag .input-affix__unit { right: 9px; }
+.posten .control:disabled { background: var(--surface-sunken); color: var(--ink-muted); cursor: not-allowed; }
+
+.posten__weg {
+  appearance: none; border: 0; background: transparent; cursor: pointer;
+  width: 30px; height: 30px; border-radius: 7px;
+  display: grid; place-items: center; color: var(--ink-muted);
+  transition: background 120ms ease, color 120ms ease;
+}
+.posten__weg:hover { background: var(--surface-sunken); color: var(--critical); }
+
+.gruppe { display: grid; gap: 6px; padding: 10px; border-radius: var(--radius-control); background: var(--surface-sunken); }
+.gruppe__summe { font-size: 12px; color: var(--ink-muted); padding-left: 16px; }
+.gruppe__summe strong { color: var(--ink-secondary); font-variant-numeric: tabular-nums; }
+.gruppe__hinzu { justify-self: start; padding: 5px 9px; font-size: 12.5px; }
+
+table.ledger tr.row-kind td:first-child { padding-left: 18px; }
+table.ledger tr.row-kind td { color: var(--ink-secondary); }
+
+/* Umschalter zwischen bündiger und aufgefächerter Darstellung */
+.sankey__modus { margin-left: auto; }
+.sankey__modus .segmented { padding: 2px; }
+.sankey__modus .segmented__option { padding: 5px 11px; font-size: 12.5px; }
+
+@media (max-width: 560px) {
+  .card__head .sankey__modus { margin-left: 0; width: 100%; }
 }

@@ -1,14 +1,26 @@
 # finpal
 
-**Brutto-Netto-Rechner und Teilzeit-Rechner für Deutschland — Rechtsstand 2026.**
-Alles rechnet im Browser. Keine Übertragung, kein Server, keine Zählpixel.
+**Brutto-Netto-, Teilzeit-, Haushalts- und Dividendenrechner für Deutschland —
+Rechtsstand 2026.** Alles rechnet im Browser. Keine Übertragung, kein Server,
+keine Zählpixel.
 
-Zwei Werkzeuge in einer Anwendung:
+Vier Werkzeuge in einer Anwendung:
 
 1. **Brutto-Netto-Rechner** — alle sechs Steuerklassen, alle sechzehn Bundesländer,
    gesetzliche und private Krankenversicherung, Minijob und Übergangsbereich.
 2. **Teilzeit-Rechner** — was eine geplante Stundenreduktion wirklich kostet:
    netto, aufs Jahr gerechnet, je aufgegebener Wochenstunde und in Rentenpunkten.
+3. **Geldfluss** — ein Sankey-Diagramm des Haushalts: mehrere Einnahmequellen
+   fließen in einen Topf, davon gehen Ausgaben mit beliebigen Unterposten ab.
+   Reicht das Geld nicht, erscheint die Lücke als eigene Quelle „Aus Rücklagen“.
+   Zwei Darstellungen: **bündig** (Unterposten liegen genau im Band ihrer
+   Ausgabe) und **aufgefächert** (die Enden rücken auseinander, sodass jede
+   Beschriftung lesbar bleibt — auch auf schmalen Geräten).
+4. **Dividenden** — Abgeltungsteuer auf Kapitalerträge: Sparer-Pauschbetrag für
+   Einzelne und Paare, Teilfreistellung bei Fonds, Kirchensteuer, ausländische
+   Quellensteuer. Rechnet wahlweise aus einem Betrag oder aus Depotwert mal
+   Dividendenrendite — und sagt umgekehrt, welches Depot ein gewünschtes
+   Monatsnetto trägt.
 
 ---
 
@@ -32,6 +44,33 @@ Die Sozialversicherung ist von Hand umgesetzt und in
 [`sozialversicherung.ts`](src/lib/sozialversicherung.ts) dokumentiert — mit
 eigenen Tests für die Beitragsbemessungsgrenzen, die sächsische Sonderregel, den
 Pflegezuschlag für Kinderlose, den Übergangsbereich und den Minijob.
+
+Das Sankey-Layout in [`sankey.ts`](src/lib/sankey.ts) ist eine reine Funktion und
+entsprechend geprüft: Die Menge bleibt über alle Spalten erhalten, Knotenhöhen
+stehen streng im Verhältnis zum Betrag, Knoten überlappen einander nicht, bündig
+füllen die Unterposten das Band ihrer Ausgabe exakt aus — und aufgefächert hält
+jedes Ende den Mindestabstand ein, den seine Beschriftung braucht.
+
+Die Kategorienamen stehen links vom Knoten, also auf ihrem eigenen Zufluss.
+Rechts lägen sie auf den Bändern ihrer Unterposten und würden eine Zuordnung
+suggerieren, die nicht stimmt.
+
+### Dividenden: die Formel, die sonst gern vereinfacht wird
+
+Fast überall liest man „25 % Abgeltungsteuer plus 5,5 % Soli plus 9 %
+Kirchensteuer“ — das ergäbe 28,63 %. Richtig sind **27,99 %**: Weil die
+Kirchensteuer als Sonderausgabe abziehbar ist, mindert sie die
+Kapitalertragsteuer selbst. § 32d Abs. 1 EStG schreibt dafür eine eigene Formel
+vor, die hier unverändert umgesetzt ist:
+
+```
+Kapitalertragsteuer = (e − 4q) / (4 + k)
+```
+
+mit `e` = steuerpflichtiger Ertrag, `q` = anrechenbare ausländische Steuer,
+`k` = Kirchensteuersatz. Die Formel erledigt die Anrechnung ausländischer
+Quellensteuer gleich mit — einschließlich des Effekts, dass sie auch den
+Solidaritätszuschlag mindert.
 
 ### Was abgedeckt ist
 
@@ -62,7 +101,7 @@ Kirchensteuer in einigen Ländern, Umlagen U1/U2 und die Unfallversicherung.
 ## Privacy first — und nachgeprüft
 
 Die Behauptung „läuft nur lokal“ ist leicht aufgestellt. Hier ist sie gemessen:
-Beim vollständigen Durchspielen beider Rechner stellt die Seite **vier
+Beim vollständigen Durchspielen aller vier Rechner stellt die Seite **vier
 Netzwerkanfragen** — HTML, JavaScript, CSS, Symbol. Alle an den eigenen Host,
 alle `GET`. Danach keine einzige mehr.
 
@@ -85,7 +124,7 @@ Voraussetzung: [Bun](https://bun.sh) (oder Node 20+ mit npm).
 ```bash
 bun install
 bun run dev        # Entwicklungsserver
-bun run test       # 298 Tests, darunter die 207 amtlichen Vektoren
+bun run test       # 360 Tests, darunter die 207 amtlichen Vektoren
 bun run typecheck  # TypeScript im strict-Modus
 bun run build      # statische Dateien nach dist/
 ```
@@ -115,8 +154,22 @@ src/lib/
   sozialversicherung.ts       Beiträge, Bemessungsgrenzen, Minijob, Übergangsbereich
   payroll.ts                  führt Steuer und Beiträge zur Abrechnung zusammen
   teilzeit.ts                 Stundenreduktion, Grenzbelastung, Entgeltpunkte
+  budget.ts                   Haushaltsmodell: Einnahmen, Ausgaben, Unterposten
+  sankey.ts                   Layout des Geldflussdiagramms (reine Funktion)
+  dividende.ts                Abgeltungsteuer, Teilfreistellung, Rückrechnung aufs Depot
+  format.ts                   deutsche Zahlenformate und ihre Rückumwandlung
 src/components/               Oberfläche (React, handgeschriebenes CSS)
 ```
+
+### Farbgebung des Geldflussdiagramms
+
+Farbe kodiert dort die **Rolle** — Einnahme, Ausgabe, Überschuss —, nicht die
+einzelne Kategorie. Das ist bewusst: Ein Überschussknoten kann neben jeder
+beliebigen Ausgabenkategorie zu liegen kommen, und für diese Nachbarschaft lässt
+sich keine Palette pro Kategorie absichern, die auch bei Farbfehlsichtigkeit
+unterscheidbar bleibt. Die drei Rollenfarben sind über alle Paare hinweg geprüft;
+jeder Posten trägt seinen Namen und Betrag direkt am Knoten, Unterposten eine
+hellere Stufe ihres Elternteils.
 
 Laufzeit-Abhängigkeiten: React und React-DOM. Sonst nichts — der Rechenkern
 soll vollständig lesbar und nachprüfbar bleiben.

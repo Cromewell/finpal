@@ -136,3 +136,45 @@ export const RENTE = {
 
 /** Durchschnittliche Wochen pro Monat (52 / 12) für Stundenlohn-Angaben. */
 export const WOCHEN_PRO_MONAT = 52 / 12;
+
+/** Besteuerung privater Kapitalerträge (Abgeltungsteuer). */
+export const KAPITAL = {
+  /** Sparer-Pauschbetrag je Person, € / Jahr (§ 20 Abs. 9 EStG). */
+  sparerPauschbetrag: 1_000,
+  /** Bei Zusammenveranlagung verdoppelt er sich. */
+  sparerPauschbetragZusammen: 2_000,
+  /** Abgeltungsteuersatz (§ 32d Abs. 1 Satz 1 EStG). */
+  abgeltungsteuer: 0.25,
+  /** Solidaritätszuschlag auf die Kapitalertragsteuer — ohne Freigrenze. */
+  soliSatz: 0.055,
+  /**
+   * Üblicher Anrechnungshöchstsatz für ausländische Quellensteuer nach den
+   * meisten Doppelbesteuerungsabkommen.
+   */
+  quellensteuerAnrechnungStandard: 15,
+} as const;
+
+export type Anlageart =
+  | 'aktien' | 'aktienfonds' | 'mischfonds' | 'immobilienfonds' | 'immobilienfondsAusland' | 'sonstigeFonds';
+
+/** Teilfreistellung für Privatanleger nach § 20 InvStG. */
+export const ANLAGEARTEN: readonly {
+  wert: Anlageart; name: string; teilfreistellung: number; hinweis: string;
+}[] = [
+  { wert: 'aktien', name: 'Einzelaktien', teilfreistellung: 0,
+    hinweis: 'Direkt gehaltene Aktien — keine Teilfreistellung.' },
+  { wert: 'aktienfonds', name: 'Aktienfonds / Aktien-ETF', teilfreistellung: 0.30,
+    hinweis: 'Mindestens 51 % Kapitalbeteiligungen — 30 % der Erträge bleiben steuerfrei.' },
+  { wert: 'mischfonds', name: 'Mischfonds', teilfreistellung: 0.15,
+    hinweis: 'Mindestens 25 % Kapitalbeteiligungen — 15 % steuerfrei.' },
+  { wert: 'immobilienfonds', name: 'Immobilienfonds', teilfreistellung: 0.60,
+    hinweis: 'Mindestens 51 % Immobilien — 60 % steuerfrei.' },
+  { wert: 'immobilienfondsAusland', name: 'Immobilienfonds (Ausland)', teilfreistellung: 0.80,
+    hinweis: 'Überwiegend ausländische Immobilien — 80 % steuerfrei.' },
+  { wert: 'sonstigeFonds', name: 'Renten- und sonstige Fonds', teilfreistellung: 0,
+    hinweis: 'Ohne nennenswerte Kapitalbeteiligungen — keine Teilfreistellung.' },
+];
+
+export const ANLAGEART_MAP = Object.fromEntries(
+  ANLAGEARTEN.map((a) => [a.wert, a]),
+) as Record<Anlageart, (typeof ANLAGEARTEN)[number]>;

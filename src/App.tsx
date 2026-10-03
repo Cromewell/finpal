@@ -2,6 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { JAHR } from './lib/constants';
 import { berechneGehalt, defaultPayrollInput, type PayrollInput } from './lib/payroll';
 import { berechneTeilzeit } from './lib/teilzeit';
+import { ausgabeBetrag, beispielBudget, budgetSummen, type Budget } from './lib/budget';
+import {
+  ANLAGEART_MAP,
+} from './lib/constants';
+import {
+  berechneDividende, defaultDividendenEingabe,
+  type DividendenEingabe,
+} from './lib/dividende';
 import { eur, num, prozent, stunden as fmtStunden } from './lib/format';
 import {
   ladeEingaben, ladeThema, setzeSpeichernErlaubt, sichereEingaben, sichereThema,
@@ -11,16 +19,29 @@ import { dekodiereZustand, ladeDateiHerunter, teileLink } from './lib/share';
 import { EingabeFormular } from './components/EingabeFormular';
 import { BruttoNettoAnsicht } from './components/BruttoNettoAnsicht';
 import { TeilzeitAnsicht } from './components/TeilzeitAnsicht';
+import { BudgetFormular } from './components/BudgetFormular';
+import { GeldflussAnsicht } from './components/GeldflussAnsicht';
+import { DividendenFormular } from './components/DividendenFormular';
+import { DividendenAnsicht } from './components/DividendenAnsicht';
 import { MethodikKarte, PrivatsphaereKarte, RechengroessenKarte } from './components/Infoabschnitte';
 import { Werkzeugleiste } from './components/Werkzeugleiste';
-import { Card, IconClock, IconMoon, IconOffline, IconScale, IconShield, IconSun } from './components/ui';
+import { Card, IconClock, IconCoin, IconFlow, IconMoon, IconOffline, IconScale, IconShield, IconSun } from './components/ui';
 
-type Reiter = 'brutto-netto' | 'teilzeit';
+type Reiter = 'brutto-netto' | 'teilzeit' | 'geldfluss' | 'dividenden';
+
+const REITER: { wert: Reiter; kurz: string; lang: string }[] = [
+  { wert: 'brutto-netto', kurz: 'Brutto-Netto', lang: '-Rechner' },
+  { wert: 'teilzeit', kurz: 'Teilzeit', lang: ' & Stundenreduktion' },
+  { wert: 'geldfluss', kurz: 'Geldfluss', lang: ' & Haushalt' },
+  { wert: 'dividenden', kurz: 'Dividenden', lang: ' & Depot' },
+];
 
 interface Zustand {
   eingabe: PayrollInput;
   stundenIst: number;
   stundenZiel: number;
+  budget: Budget;
+  dividenden: DividendenEingabe;
   reiter: Reiter;
 }
 
@@ -28,6 +49,8 @@ const START: Zustand = {
   eingabe: defaultPayrollInput(),
   stundenIst: 40,
   stundenZiel: 32,
+  budget: beispielBudget(),
+  dividenden: defaultDividendenEingabe(),
   reiter: 'brutto-netto',
 };
 
@@ -38,8 +61,19 @@ function zusammenfuehren(basis: Zustand, teil: Partial<Zustand> | null): Zustand
     eingabe: { ...basis.eingabe, ...(teil.eingabe ?? {}) },
     stundenIst: typeof teil.stundenIst === 'number' && teil.stundenIst > 0 ? teil.stundenIst : basis.stundenIst,
     stundenZiel: typeof teil.stundenZiel === 'number' && teil.stundenZiel > 0 ? teil.stundenZiel : basis.stundenZiel,
-    reiter: teil.reiter === 'teilzeit' || teil.reiter === 'brutto-netto' ? teil.reiter : basis.reiter,
+    budget: istBudget(teil.budget) ? teil.budget : basis.budget,
+    dividenden: { ...basis.dividenden, ...(teil.dividenden ?? {}) },
+    reiter: REITER.some((r) => r.wert === teil.reiter) ? teil.reiter! : basis.reiter,
   };
+}
+
+/** Prüft ein aus Link oder Speicher stammendes Budget, bevor es übernommen wird. */
+function istBudget(wert: unknown): wert is Budget {
+  if (typeof wert !== 'object' || wert === null) return false;
+  const b = wert as Partial<Budget>;
+  return Array.isArray(b.einnahmen) && Array.isArray(b.ausgaben)
+    && b.einnahmen.every((e) => typeof e?.id === 'string' && typeof e?.betrag === 'number')
+    && b.ausgaben.every((a) => typeof a?.id === 'string' && Array.isArray(a?.unterposten));
 }
 
 function anfangszustand(): Zustand {
@@ -54,7 +88,7 @@ export default function App() {
   const [speichern, setzeSpeichern] = useState(speichernErlaubt);
   const [meldung, setzeMeldung] = useState<string | null>(null);
 
-  const { eingabe, stundenIst, stundenZiel, reiter } = zustand;
+  const { eingabe, stundenIst, stundenZiel, budget, dividenden, reiter } = zustand;
 
   // Thema auf das Wurzelelement schreiben.
   useEffect(() => {
@@ -83,6 +117,19 @@ export default function App() {
     () => berechneTeilzeit({ basis: eingabe, stundenIst, stundenZiel }),
     [eingabe, stundenIst, stundenZiel],
   );
+  const haushalt = useMemo(() => budgetSummen(budget), [budget]);
+  const steuerlicheLage = useMemo(
+    () => ({ kirchensteuer: eingabe.kirchensteuer, bundesland: eingabe.bundesland }),
+    [eingabe.kirchensteuer, eingabe.bundesland],
+  );
+  const dividende = useMemo(
+    () => berechneDividende(dividenden, steuerlicheLage),
+    [dividenden, steuerlicheLage],
+  );
+
+  const patchDividenden = useCallback((teil: Partial<DividendenEingabe>) => {
+    setzeZustand((alt) => ({ ...alt, dividenden: { ...alt.dividenden, ...teil } }));
+  }, []);
 
   const schalteSpeichern = (wert: boolean) => {
     setzeSpeichernErlaubt(wert);
@@ -103,6 +150,52 @@ export default function App() {
   };
 
   const csv = () => {
+    if (reiter === 'geldfluss') {
+      const zeilen: string[][] = [
+        ['Art', 'Posten', 'Gehoert zu', 'Monat in Euro', 'Jahr in Euro'],
+        ...budget.einnahmen.filter((e) => e.betrag > 0)
+          .map((e) => ['Einnahme', e.name, '', num(e.betrag), num(e.betrag * 12)]),
+        ...budget.ausgaben.flatMap((a) => {
+          const summe = ausgabeBetrag(a);
+          return [
+            ['Ausgabe', a.name, '', num(summe), num(summe * 12)],
+            ...a.unterposten.filter((u) => u.betrag > 0)
+              .map((u) => ['Unterposten', u.name, a.name, num(u.betrag), num(u.betrag * 12)]),
+          ];
+        }),
+        ['Summe', 'Einnahmen', '', num(haushalt.einnahmen), num(haushalt.einnahmen * 12)],
+        ['Summe', 'Ausgaben', '', num(haushalt.ausgaben), num(haushalt.ausgaben * 12)],
+        ['Summe', haushalt.saldo < 0 ? 'Fehlbetrag' : 'Bleibt uebrig', '',
+          num(haushalt.saldo), num(haushalt.saldo * 12)],
+      ];
+      const inhalt = zeilen.map((z) => z.map((f) => `"${f.replace(/"/g, '""')}"`).join(';')).join('\r\n');
+      ladeDateiHerunter(`finpal-geldfluss-${JAHR}.csv`, inhalt, 'text/csv');
+      setzeMeldung('CSV im Browser erzeugt — ohne Umweg über einen Server');
+      return;
+    }
+
+    if (reiter === 'dividenden') {
+      const zeilen: string[][] = [
+        ['Posten', 'Jahr in Euro', 'Monat in Euro'],
+        ['Bruttodividende', num(dividende.bruttoJahr), num(dividende.bruttoMonat)],
+        ['Teilfreistellung', num(dividende.teilfreigestellt), num(dividende.teilfreigestellt / 12)],
+        ['Sparer-Pauschbetrag genutzt', num(dividende.pauschbetragGenutzt), ''],
+        ['Steuerpflichtiger Betrag', num(dividende.bemessungsgrundlage), ''],
+        ['Auslaendische Quellensteuer', num(dividende.quellensteuer), num(dividende.quellensteuer / 12)],
+        ['Kapitalertragsteuer', num(dividende.kapitalertragsteuer), num(dividende.kapitalertragsteuer / 12)],
+        ['Solidaritaetszuschlag', num(dividende.soli), num(dividende.soli / 12)],
+        ['Kirchensteuer', num(dividende.kirchensteuer), num(dividende.kirchensteuer / 12)],
+        ['Steuern gesamt', num(dividende.steuernGesamt), num(dividende.steuernGesamt / 12)],
+        ['Nettodividende', num(dividende.nettoJahr), num(dividende.nettoMonat)],
+        ['Anlageart', ANLAGEART_MAP[dividenden.anlageart].name, ''],
+        ['Depotwert', dividende.portfolio === null ? '' : num(dividende.portfolio), ''],
+      ];
+      const inhalt = zeilen.map((z) => z.map((f) => `"${f.replace(/"/g, '""')}"`).join(';')).join('\r\n');
+      ladeDateiHerunter(`finpal-dividenden-${JAHR}.csv`, inhalt, 'text/csv');
+      setzeMeldung('CSV im Browser erzeugt — ohne Umweg über einen Server');
+      return;
+    }
+
     const zeilen: string[][] = reiter === 'brutto-netto'
       ? [
         ['Posten', 'Monat in Euro', 'Jahr in Euro'],
@@ -175,11 +268,12 @@ export default function App() {
       <main className="shell">
         <div className="hero">
           <h1 className="hero__title">
-            Was von Ihrem Gehalt übrig bleibt — und was eine kürzere Woche wirklich kostet.
+            Was von Ihrem Gehalt übrig bleibt — und wo es am Ende des Monats hingeflossen ist.
           </h1>
           <p className="hero__lead">
-            Zwei Rechner für {JAHR}: Brutto zu Netto für alle Steuerklassen und Bundesländer, und
-            eine Vorausschau für eine geplante Stundenreduktion. Der Steuerteil folgt dem amtlichen
+            Vier Rechner für {JAHR}: Brutto zu Netto für alle Steuerklassen und Bundesländer, eine
+            Vorausschau für eine geplante Stundenreduktion, ein Geldflussbild Ihres Haushalts und
+            die Abgeltungsteuer auf Dividenden. Der Steuerteil folgt dem amtlichen
             Programmablaufplan des Bundesfinanzministeriums — und alles läuft ausschließlich auf
             Ihrem Gerät.
           </p>
@@ -188,56 +282,77 @@ export default function App() {
             <span className="fact"><IconOffline />Funktioniert offline</span>
             <span className="fact"><IconScale />Amtlicher Rechenkern {JAHR}</span>
             <span className="fact"><IconClock />Teilzeit-Vorausschau inklusive Rente</span>
+            <span className="fact"><IconFlow />Geldfluss als Sankey-Diagramm</span>
+            <span className="fact"><IconCoin />Dividenden nach Abgeltungsteuer</span>
           </div>
         </div>
 
         <div className="tabs" role="tablist" aria-label="Rechner wählen">
-          <button
-            type="button" role="tab" className="tab"
-            aria-selected={reiter === 'brutto-netto'}
-            onClick={() => setzeZustand((alt) => ({ ...alt, reiter: 'brutto-netto' }))}
-          >
-            Brutto-Netto-Rechner
-          </button>
-          <button
-            type="button" role="tab" className="tab"
-            aria-selected={reiter === 'teilzeit'}
-            onClick={() => setzeZustand((alt) => ({ ...alt, reiter: 'teilzeit' }))}
-          >
-            Teilzeit<span className="tab__lang"> &amp; Stundenreduktion</span>
-          </button>
+          {REITER.map((r) => (
+            <button
+              key={r.wert}
+              type="button" role="tab" className="tab"
+              aria-selected={reiter === r.wert}
+              onClick={() => setzeZustand((alt) => ({ ...alt, reiter: r.wert }))}
+            >
+              {r.kurz}<span className="tab__lang">{r.lang}</span>
+            </button>
+          ))}
         </div>
 
         <div className="layout">
           <div className="layout__inputs">
-            <Card
-              title="Ihre Angaben"
-              note={reiter === 'teilzeit' ? `${fmtStunden(stundenIst)} Std. heute` : undefined}
-            >
-              <EingabeFormular
-                werte={eingabe}
-                patch={patch}
-                bruttoLabel={reiter === 'teilzeit' ? 'Heutiges Bruttogehalt' : 'Bruttogehalt'}
-                bruttoHinweis={reiter === 'teilzeit'
-                  ? `Das Gehalt bei ${fmtStunden(stundenIst)} Wochenstunden`
-                  : undefined}
-              />
-            </Card>
+            {reiter === 'dividenden' ? (
+              <Card title="Ihre Angaben" note={`${eur(dividende.bruttoJahr)} brutto`}>
+                <DividendenFormular
+                  werte={dividenden}
+                  patch={patchDividenden}
+                  person={eingabe}
+                  patchPerson={patch}
+                  bruttoJahr={dividende.bruttoJahr}
+                />
+              </Card>
+            ) : reiter === 'geldfluss' ? (
+              <Card title="Ihr Haushalt" note={`${eur(haushalt.einnahmen)} ein`}>
+                <BudgetFormular
+                  budget={budget}
+                  setzeBudget={(neu) => setzeZustand((alt) => ({ ...alt, budget: neu }))}
+                  nettoVorschlag={abrechnung.netto.monat}
+                />
+              </Card>
+            ) : (
+              <Card
+                title="Ihre Angaben"
+                note={reiter === 'teilzeit' ? `${fmtStunden(stundenIst)} Std. heute` : undefined}
+              >
+                <EingabeFormular
+                  werte={eingabe}
+                  patch={patch}
+                  bruttoLabel={reiter === 'teilzeit' ? 'Heutiges Bruttogehalt' : 'Bruttogehalt'}
+                  bruttoHinweis={reiter === 'teilzeit'
+                    ? `Das Gehalt bei ${fmtStunden(stundenIst)} Wochenstunden`
+                    : undefined}
+                />
+              </Card>
+            )}
             <Werkzeugleiste onTeilen={teilen} onCsv={csv} onZuruecksetzen={zuruecksetzen} />
           </div>
 
           <div className="layout__results">
-            {reiter === 'brutto-netto'
-              ? <BruttoNettoAnsicht ergebnis={abrechnung} />
-              : (
-                <TeilzeitAnsicht
-                  ergebnis={teilzeit}
-                  stundenIst={stundenIst}
-                  stundenZiel={stundenZiel}
-                  setzeStundenIst={(wert) => setzeZustand((alt) => ({ ...alt, stundenIst: wert }))}
-                  setzeStundenZiel={(wert) => setzeZustand((alt) => ({ ...alt, stundenZiel: wert }))}
-                />
-              )}
+            {reiter === 'brutto-netto' && <BruttoNettoAnsicht ergebnis={abrechnung} />}
+            {reiter === 'teilzeit' && (
+              <TeilzeitAnsicht
+                ergebnis={teilzeit}
+                stundenIst={stundenIst}
+                stundenZiel={stundenZiel}
+                setzeStundenIst={(wert) => setzeZustand((alt) => ({ ...alt, stundenIst: wert }))}
+                setzeStundenZiel={(wert) => setzeZustand((alt) => ({ ...alt, stundenZiel: wert }))}
+              />
+            )}
+            {reiter === 'geldfluss' && <GeldflussAnsicht budget={budget} />}
+            {reiter === 'dividenden' && (
+              <DividendenAnsicht eingabe={dividenden} lage={steuerlicheLage} />
+            )}
           </div>
         </div>
 
