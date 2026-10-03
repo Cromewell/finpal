@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>finpal — Brutto-Netto- und Teilzeit-Rechner 2026</title>
+    <meta
+      name="description"
+      content="Brutto-Netto-Rechner 2026 für alle Steuerklassen und Bundesländer plus Teilzeit-Rechner für eine geplante Stundenreduktion. Rechnet vollständig im Browser — Ihre Daten werden nicht übertragen."
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f4f4f1" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)" />
+    <meta name="robots" content="index, follow" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <!--
+      Bewusst keine externen Ressourcen: keine Schriftarten, Skripte oder
+      Stilvorlagen von fremden Servern. Dadurch entsteht beim Aufruf kein
+      einziger Netzwerkzugriff zu Dritten.
+    -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      <p style="font-family: system-ui, sans-serif; padding: 24px; max-width: 60ch">
+        finpal rechnet ausschließlich in Ihrem Browser — ganz ohne Server. Dafür wird JavaScript
+        benötigt. Bitte aktivieren Sie es für diese Seite.
+      </p>
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
