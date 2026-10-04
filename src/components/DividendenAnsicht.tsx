@@ -4,7 +4,7 @@ import {
   berechneDividende, portfolioFuerNetto,
   type DividendenEingabe, type SteuerlicheLage,
 } from '../lib/dividende';
-import { eur, eurRund, num, prozent } from '../lib/format';
+import { eur, eurRund, num, numFlex, prozent } from '../lib/format';
 import { Card, Insight, NumberField, Note } from './ui';
 import { VerteilungBalken } from './VerteilungBalken';
 
@@ -19,7 +19,6 @@ export function DividendenAnsicht({
 }) {
   const [zielNetto, setzeZielNetto] = useState(1_000);
   const r = berechneDividende(eingabe, lage);
-  const art = ANLAGEART_MAP[eingabe.anlageart];
   const noetigesDepot = portfolioFuerNetto(zielNetto, eingabe, lage);
   const weitereSteuern = r.soli + r.kirchensteuer + r.quellensteuer;
 
@@ -52,6 +51,12 @@ export function DividendenAnsicht({
                 <span className="mini__value">{prozent(r.nettoRendite, 2)}</span>
               </div>
             )}
+            {r.mischrendite !== null && r.positionen.length > 1 && (
+              <div className="mini">
+                <span className="mini__label">Mischrendite brutto</span>
+                <span className="mini__value">{numFlex(r.mischrendite)} %</span>
+              </div>
+            )}
           </div>
         </div>
       </section>
@@ -66,6 +71,65 @@ export function DividendenAnsicht({
           ]}
         />
       </Card>
+
+      {r.positionen.length > 1 && (
+        <Card
+          title="Das Depot nach Positionen"
+          note={`Anteile zusammen ${numFlex(r.anteilSumme)} %`}
+        >
+          <div className="table-scroll">
+            <table className="ledger">
+              <thead>
+                <tr>
+                  <th scope="col">Position</th>
+                  <th scope="col">Anteil</th>
+                  <th scope="col">Depotwert</th>
+                  <th scope="col">Rendite</th>
+                  <th scope="col">Brutto / Jahr</th>
+                  <th scope="col">Teilfreistellung</th>
+                  <th scope="col">Steuerpflichtig</th>
+                </tr>
+              </thead>
+              <tbody>
+                {r.positionen.map((p) => (
+                  <tr key={p.id}>
+                    <td>
+                      <span className="swatch-cell">
+                        <span className="swatch" style={{ background: 'var(--series-2)' }} />
+                        {p.name || ANLAGEART_MAP[p.anlageart].name}
+                      </span>
+                    </td>
+                    <td>{numFlex(p.anteil)} %</td>
+                    <td>{p.depotwert === null ? '—' : eurRund(p.depotwert)}</td>
+                    <td>{p.rendite === null ? '—' : `${numFlex(p.rendite)} %`}</td>
+                    <td>{eur(p.bruttoJahr)}</td>
+                    <td className="cell-rate">
+                      {p.teilfreistellungssatz > 0
+                        ? `${prozent(p.teilfreistellungssatz, 0)} · −${eur(p.teilfreigestellt)}`
+                        : '—'}
+                    </td>
+                    <td>{eur(p.steuerpflichtig)}</td>
+                  </tr>
+                ))}
+                <tr className="row-sum">
+                  <td>Zusammen</td>
+                  <td>{numFlex(r.anteilSumme)} %</td>
+                  <td>{r.portfolio === null ? '—' : eurRund(r.portfolio)}</td>
+                  <td>{r.mischrendite === null ? '—' : `${numFlex(r.mischrendite)} %`}</td>
+                  <td>{eur(r.bruttoJahr)}</td>
+                  <td className="cell-rate">−{eur(r.teilfreigestellt)}</td>
+                  <td>{eur(r.ertragSteuerpflichtig)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="field__hint" style={{ marginTop: 12 }}>
+            Teilfreistellung und ausländische Quellensteuer gelten je Position. Der
+            Sparer-Pauschbetrag dagegen nur einmal für alles zusammen — deshalb wird er erst
+            von der Summe abgezogen.
+          </p>
+        </Card>
+      )}
 
       <Card title="Der Weg von brutto zu netto">
         <div className="table-scroll">
@@ -82,7 +146,9 @@ export function DividendenAnsicht({
               <tr>
                 <td>Bruttodividende</td>
                 <td className="cell-rate">
-                  {r.portfolio ? `${num(eingabe.rendite)} % auf ${eurRund(r.portfolio)}` : ''}
+                  {r.portfolio && r.mischrendite !== null
+                    ? `${numFlex(r.mischrendite)} % auf ${eurRund(r.portfolio)}`
+                    : ''}
                 </td>
                 <td>{eur(r.bruttoJahr)}</td>
                 <td>{eur(r.bruttoMonat)}</td>
@@ -91,7 +157,10 @@ export function DividendenAnsicht({
               {r.teilfreistellungssatz > 0 && (
                 <tr>
                   <td>abzüglich Teilfreistellung</td>
-                  <td className="cell-rate">{prozent(r.teilfreistellungssatz, 0)} · {art.name}</td>
+                  <td className="cell-rate">
+                    {prozent(r.teilfreistellungssatz, 1)}
+                    {r.positionen.length === 1 ? ` · ${r.positionen[0]!.name}` : ' über alle Positionen'}
+                  </td>
                   <td>−{eur(r.teilfreigestellt)}</td>
                   <td>−{eur(r.teilfreigestellt / 12)}</td>
                 </tr>
@@ -126,8 +195,10 @@ export function DividendenAnsicht({
                     </span>
                   </td>
                   <td className="cell-rate">
-                    {prozent(eingabe.quellensteuerProzent / 100, 0)}, davon{' '}
-                    {eur(r.quellensteuerAngerechnet)} angerechnet
+                    {/* Kein Prozentsatz: Bei gemischten Depots hat jede Position
+                        ihren eigenen; die Summe sagt hier mehr aus. */}
+                    davon {eur(r.quellensteuerAngerechnet)} angerechnet
+                    {r.quellensteuerVerloren > 0 && `, ${eur(r.quellensteuerVerloren)} verloren`}
                   </td>
                   <td>{eur(r.quellensteuer)}</td>
                   <td>{eur(r.quellensteuer / 12)}</td>
@@ -202,8 +273,9 @@ export function DividendenAnsicht({
         {noetigesDepot !== null ? (
           <div style={{ marginTop: 16 }}>
             <Insight title="Benötigter Depotwert">
-              Für <strong>{eur(zielNetto)}</strong> netto im Monat brauchen Sie bei{' '}
-              {num(eingabe.rendite)} % Dividendenrendite ein Depot von etwa{' '}
+              Für <strong>{eur(zielNetto)}</strong> netto im Monat brauchen Sie bei
+              {r.mischrendite !== null ? ` ${numFlex(r.mischrendite)} %` : ''} Mischrendite und
+              unveränderter Aufteilung ein Depot von etwa{' '}
               <strong>{eurRund(noetigesDepot)}</strong>
               {r.portfolio !== null && r.portfolio > 0 && (
                 <>
@@ -214,14 +286,17 @@ export function DividendenAnsicht({
           </div>
         ) : (
           <Note art="warnung">
-            Ohne Dividendenrendite lässt sich kein Depotwert berechnen — tragen Sie links eine
-            Rendite größer als null ein.
+            Ohne Dividendenrendite lässt sich kein Depotwert berechnen — tragen Sie links
+            mindestens eine Position mit einer Rendite größer als null ein.
           </Note>
         )}
       </Card>
 
-      {eingabe.rendite > 0 && (
-        <Card title="Was verschiedene Depotgrößen bringen" note={`bei ${num(eingabe.rendite)} % Rendite`}>
+      {r.mischrendite !== null && r.mischrendite > 0 && (
+        <Card
+          title="Was verschiedene Depotgrößen bringen"
+          note={`bei ${numFlex(r.mischrendite)} % Mischrendite und gleicher Aufteilung`}
+        >
           <div className="table-scroll">
             <table className="ledger">
               <thead>

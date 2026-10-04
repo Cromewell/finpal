@@ -178,3 +178,34 @@ export const ANLAGEARTEN: readonly {
 export const ANLAGEART_MAP = Object.fromEntries(
   ANLAGEARTEN.map((a) => [a.wert, a]),
 ) as Record<Anlageart, (typeof ANLAGEARTEN)[number]>;
+
+/** Besteuerung und Verbeitragung der gesetzlichen Rente. */
+export const RENTENBEZUG = {
+  /** Besteuerungsanteil für den Rentenbeginn 2023 — Ausgangspunkt der Kohorte. */
+  besteuerungsanteilBasisjahr: 2023,
+  besteuerungsanteilBasis: 0.825,
+  /** Seit dem Wachstumschancengesetz steigt der Anteil um 0,5 Punkte je Jahr. */
+  besteuerungsanteilSchritt: 0.005,
+  /** Ab diesem Rentenbeginn ist die Rente voll steuerpflichtig. */
+  vollBesteuertAb: 2058,
+  /** Werbungskosten-Pauschbetrag für Renten (§ 9a Satz 1 Nr. 3 EStG). */
+  werbungskostenPauschbetrag: 102,
+  /** Sonderausgaben-Pauschbetrag. */
+  sonderausgabenPauschbetrag: 36,
+  /** Krankenversicherungsbeitrag der Rentner auf die gesetzliche Rente. */
+  kvSatzRentner: 0.073,
+  /** Pflegeversicherung tragen Rentner allein und in voller Höhe. */
+  pvSatzRentner: 0.036,
+  pvZuschlagKinderlos: 0.006,
+} as const;
+
+/**
+ * Regelaltersgrenze nach Geburtsjahr (§ 235 SGB VI), in Jahren.
+ * Für die Jahrgänge 1947 bis 1963 steigt sie schrittweise von 65 auf 67.
+ */
+export function regelaltersgrenze(geburtsjahr: number): number {
+  if (geburtsjahr <= 1946) return 65;
+  if (geburtsjahr >= 1964) return 67;
+  if (geburtsjahr <= 1958) return 65 + (geburtsjahr - 1946) / 12;
+  return 66 + ((geburtsjahr - 1958) * 2) / 12;
+}

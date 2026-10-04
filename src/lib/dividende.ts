@@ -9,6 +9,10 @@
  * k = Kirchensteuersatz. Die oft zu lesende Rechnung „25 % plus Soli plus
  * Kirchensteuer“ ist zu hoch: Weil die Kirchensteuer als Sonderausgabe
  * abziehbar ist, mindert sie die Kapitalertragsteuer selbst.
+ *
+ * Ein Depot kann aus mehreren Positionen bestehen — etwa 70 % Aktien-ETF und
+ * 30 % Einzelaktien. Teilfreistellung und ausländische Quellensteuer gelten je
+ * Position; der Sparer-Pauschbetrag dagegen nur einmal für alles zusammen.
  */
 
 import {
@@ -21,20 +25,33 @@ import { cent } from './sozialversicherung';
 export type Veranlagung = 'einzeln' | 'zusammen';
 export type Eingabeart = 'betrag' | 'portfolio';
 
+export interface Depotposition {
+  id: string;
+  name: string;
+  /** Anteil am Depotwert in Prozent. */
+  anteil: number;
+  /** Dividendenrendite dieser Position in Prozent. */
+  rendite: number;
+  anlageart: Anlageart;
+  /** Im Ausland einbehaltene Quellensteuer in Prozent (nur bei Einzelaktien). */
+  quellensteuerProzent: number;
+}
+
 export interface DividendenEingabe {
   eingabeart: Eingabeart;
   /** Bruttodividende pro Jahr, wenn direkt eingegeben. */
   bruttoJahr: number;
-  /** Depotwert, wenn über Portfolio und Rendite gerechnet wird. */
+  /** Anlageart im Modus „Betrag“. */
+  anlageart: Anlageart;
+  /** Quellensteuer im Modus „Betrag“, in Prozent. */
+  quellensteuerProzent: number;
+  /** Depotwert im Modus „Depot & Rendite“. */
   portfolio: number;
-  /** Dividendenrendite des Portfolios in Prozent. */
-  rendite: number;
+  /** Zusammensetzung des Depots. */
+  positionen: Depotposition[];
   veranlagung: Veranlagung;
   /** Anderweitig bereits verbrauchter Sparer-Pauschbetrag, Euro. */
   pauschbetragVerbraucht: number;
-  anlageart: Anlageart;
-  /** Im Ausland einbehaltene Quellensteuer in Prozent (nur bei Einzelaktien). */
-  quellensteuerProzent: number;
   /** Anrechnungshöchstsatz nach Doppelbesteuerungsabkommen, in Prozent. */
   anrechnungshoechstsatz: number;
 }
@@ -45,11 +62,36 @@ export interface SteuerlicheLage {
   bundesland: BundeslandCode;
 }
 
+export interface PositionErgebnis {
+  id: string;
+  name: string;
+  anlageart: Anlageart;
+  /** Anteil am Depot in Prozent; im Modus „Betrag“ immer 100. */
+  anteil: number;
+  /** Auf diese Position entfallender Depotwert, sofern bekannt. */
+  depotwert: number | null;
+  rendite: number | null;
+  bruttoJahr: number;
+  teilfreistellungssatz: number;
+  teilfreigestellt: number;
+  /** Steuerpflichtiger Ertrag dieser Position vor dem Pauschbetrag. */
+  steuerpflichtig: number;
+  quellensteuer: number;
+  /** Davon nach Doppelbesteuerungsabkommen grundsätzlich anrechenbar. */
+  quellensteuerAnrechenbar: number;
+}
+
 export interface DividendenErgebnis {
+  positionen: PositionErgebnis[];
   bruttoJahr: number;
   bruttoMonat: number;
-  /** Depotwert — berechnet oder eingegeben, sofern bekannt. */
+  /** Depotwert — eingegeben oder zurückgerechnet, sofern bekannt. */
   portfolio: number | null;
+  /** Gewichtete Dividendenrendite über alle Positionen, in Prozent. */
+  mischrendite: number | null;
+  /** Summe der eingetragenen Anteile in Prozent — sollte 100 ergeben. */
+  anteilSumme: number;
+  /** Wirksame Teilfreistellung über alle Positionen hinweg. */
   teilfreistellungssatz: number;
   teilfreigestellt: number;
   /** Steuerpflichtiger Ertrag vor Abzug des Sparer-Pauschbetrags. */
@@ -83,22 +125,23 @@ export function defaultDividendenEingabe(): DividendenEingabe {
   return {
     eingabeart: 'portfolio',
     bruttoJahr: 3_000,
-    portfolio: 100_000,
-    rendite: 3,
-    veranlagung: 'einzeln',
-    pauschbetragVerbraucht: 0,
     anlageart: 'aktienfonds',
     quellensteuerProzent: 0,
+    portfolio: 100_000,
+    positionen: [
+      {
+        id: 'p-etf', name: 'Aktien-ETF', anteil: 70, rendite: 2.5,
+        anlageart: 'aktienfonds', quellensteuerProzent: 0,
+      },
+      {
+        id: 'p-aktien', name: 'Einzelaktien', anteil: 30, rendite: 3.8,
+        anlageart: 'aktien', quellensteuerProzent: 15,
+      },
+    ],
+    veranlagung: 'einzeln',
+    pauschbetragVerbraucht: 0,
     anrechnungshoechstsatz: KAPITAL.quellensteuerAnrechnungStandard,
   };
-}
-
-/** Bruttodividende aus der gewählten Eingabeart. */
-export function bruttodividende(eingabe: DividendenEingabe): number {
-  if (eingabe.eingabeart === 'portfolio') {
-    return cent(Math.max(0, eingabe.portfolio) * (Math.max(0, eingabe.rendite) / 100));
-  }
-  return cent(Math.max(0, eingabe.bruttoJahr));
 }
 
 export function sparerPauschbetrag(veranlagung: Veranlagung): number {
@@ -107,25 +150,100 @@ export function sparerPauschbetrag(veranlagung: Veranlagung): number {
     : KAPITAL.sparerPauschbetrag;
 }
 
+/** Summe der eingetragenen Anteile in Prozent. */
+export function anteilSumme(positionen: Depotposition[]): number {
+  return Math.round(positionen.reduce((s, p) => s + Math.max(0, p.anteil), 0) * 100) / 100;
+}
+
+/**
+ * Zerlegt die Eingabe in Positionen mit konkreten Beträgen.
+ * Im Modus „Betrag“ entsteht genau eine Position.
+ */
+function zerlege(eingabe: DividendenEingabe, hoechstsatz: number): PositionErgebnis[] {
+  const bauen = (
+    teil: {
+      id: string; name: string; anlageart: Anlageart; anteil: number;
+      depotwert: number | null; rendite: number | null;
+      brutto: number; quellensteuerProzent: number;
+    },
+  ): PositionErgebnis => {
+    const art = ANLAGEART_MAP[teil.anlageart];
+    const teilfreigestellt = cent(teil.brutto * art.teilfreistellung);
+    // Ausländische Quellensteuer gibt es nur bei direkt gehaltenen Papieren;
+    // in Fonds wird sie bereits auf Fondsebene verrechnet.
+    const qstSatz = teil.anlageart === 'aktien' ? Math.max(0, teil.quellensteuerProzent) : 0;
+    return {
+      id: teil.id,
+      name: teil.name,
+      anlageart: teil.anlageart,
+      anteil: teil.anteil,
+      depotwert: teil.depotwert,
+      rendite: teil.rendite,
+      bruttoJahr: teil.brutto,
+      teilfreistellungssatz: art.teilfreistellung,
+      teilfreigestellt,
+      steuerpflichtig: cent(teil.brutto - teilfreigestellt),
+      quellensteuer: cent(teil.brutto * (qstSatz / 100)),
+      quellensteuerAnrechenbar: cent(teil.brutto * (Math.min(qstSatz, hoechstsatz) / 100)),
+    };
+  };
+
+  if (eingabe.eingabeart === 'betrag') {
+    return [bauen({
+      id: 'betrag',
+      name: ANLAGEART_MAP[eingabe.anlageart].name,
+      anlageart: eingabe.anlageart,
+      anteil: 100,
+      depotwert: null,
+      rendite: null,
+      brutto: cent(Math.max(0, eingabe.bruttoJahr)),
+      quellensteuerProzent: eingabe.quellensteuerProzent,
+    })];
+  }
+
+  const depot = Math.max(0, eingabe.portfolio);
+  return eingabe.positionen.map((p) => {
+    const anteil = Math.max(0, p.anteil);
+    const wert = cent(depot * (anteil / 100));
+    return bauen({
+      id: p.id,
+      name: p.name,
+      anlageart: p.anlageart,
+      anteil,
+      depotwert: wert,
+      rendite: Math.max(0, p.rendite),
+      brutto: cent(wert * (Math.max(0, p.rendite) / 100)),
+      quellensteuerProzent: p.quellensteuerProzent,
+    });
+  });
+}
+
+/** Bruttodividende aus der gewählten Eingabeart. */
+export function bruttodividende(eingabe: DividendenEingabe): number {
+  return cent(
+    zerlege(eingabe, eingabe.anrechnungshoechstsatz).reduce((s, p) => s + p.bruttoJahr, 0),
+  );
+}
+
 export function berechneDividende(
   eingabe: DividendenEingabe,
   lage: SteuerlicheLage,
 ): DividendenErgebnis {
-  const brutto = bruttodividende(eingabe);
-  const art = ANLAGEART_MAP[eingabe.anlageart];
+  const hoechstsatz = Math.max(0, eingabe.anrechnungshoechstsatz);
+  const positionen = zerlege(eingabe, hoechstsatz);
   const k = lage.kirchensteuer ? BUNDESLAND_MAP[lage.bundesland].kirchensteuersatz : 0;
 
-  // Ausländische Quellensteuer gibt es nur bei direkt gehaltenen Papieren;
-  // in Fonds wird sie bereits auf Fondsebene verrechnet.
-  const qstSatz = eingabe.anlageart === 'aktien' ? Math.max(0, eingabe.quellensteuerProzent) : 0;
-  const quellensteuer = cent(brutto * (qstSatz / 100));
-  const anrechenbarNachDba = cent(
-    brutto * (Math.min(qstSatz, Math.max(0, eingabe.anrechnungshoechstsatz)) / 100),
-  );
+  const summe = (hole: (p: PositionErgebnis) => number) =>
+    cent(positionen.reduce((s, p) => s + hole(p), 0));
 
-  const teilfreigestellt = cent(brutto * art.teilfreistellung);
-  const ertragSteuerpflichtig = cent(brutto - teilfreigestellt);
+  const brutto = summe((p) => p.bruttoJahr);
+  const teilfreigestellt = summe((p) => p.teilfreigestellt);
+  const ertragSteuerpflichtig = summe((p) => p.steuerpflichtig);
+  const quellensteuer = summe((p) => p.quellensteuer);
+  const anrechenbarNachDba = summe((p) => p.quellensteuerAnrechenbar);
 
+  // Der Sparer-Pauschbetrag gilt einmal für alle Kapitalerträge zusammen,
+  // nicht je Position.
   const pauschbetrag = sparerPauschbetrag(eingabe.veranlagung);
   const verfuegbar = Math.max(0, pauschbetrag - Math.max(0, eingabe.pauschbetragVerbraucht));
   const genutzt = cent(Math.min(ertragSteuerpflichtig, verfuegbar));
@@ -142,15 +260,21 @@ export function berechneDividende(
   const steuernGesamt = cent(deutscheSteuer + quellensteuer);
   const nettoJahr = cent(brutto - steuernGesamt);
 
+  const anteile = eingabe.eingabeart === 'portfolio' ? anteilSumme(eingabe.positionen) : 100;
   const portfolio = eingabe.eingabeart === 'portfolio'
     ? Math.max(0, eingabe.portfolio)
-    : (eingabe.rendite > 0 ? cent(brutto / (eingabe.rendite / 100)) : null);
+    : null;
 
   return {
+    positionen,
     bruttoJahr: brutto,
     bruttoMonat: cent(brutto / 12),
     portfolio,
-    teilfreistellungssatz: art.teilfreistellung,
+    mischrendite: portfolio && portfolio > 0
+      ? Math.round((brutto / portfolio) * 10_000) / 100
+      : null,
+    anteilSumme: anteile,
+    teilfreistellungssatz: brutto > 0 ? teilfreigestellt / brutto : 0,
     teilfreigestellt,
     ertragSteuerpflichtig,
     pauschbetrag,
@@ -170,7 +294,9 @@ export function berechneDividende(
     effektiverSteuersatz: brutto > 0 ? steuernGesamt / brutto : 0,
     nettoRendite: portfolio && portfolio > 0 ? nettoJahr / portfolio : null,
     hinweise: sammleHinweise(eingabe, {
-      brutto, genutzt, verfuegbar, e, quellensteuer, angerechnet, teilfreistellung: art.teilfreistellung,
+      brutto, genutzt, verfuegbar, e, quellensteuer, angerechnet,
+      teilfreistellung: brutto > 0 ? teilfreigestellt / brutto : 0,
+      anteile,
     }),
   };
 }
@@ -179,10 +305,18 @@ function sammleHinweise(
   eingabe: DividendenEingabe,
   w: {
     brutto: number; genutzt: number; verfuegbar: number; e: number;
-    quellensteuer: number; angerechnet: number; teilfreistellung: number;
+    quellensteuer: number; angerechnet: number; teilfreistellung: number; anteile: number;
   },
 ): string[] {
   const hinweise: string[] = [];
+
+  if (eingabe.eingabeart === 'portfolio' && Math.abs(w.anteile - 100) > 0.01) {
+    hinweise.push(
+      w.anteile < 100
+        ? `Die Anteile ergeben zusammen ${w.anteile} % — die fehlenden ${Math.round((100 - w.anteile) * 100) / 100} % des Depots bringen in dieser Rechnung keine Dividende. Das passt, wenn dort Anleihen, Gold oder Tagesgeld liegen; sonst fehlt eine Position.`
+        : `Die Anteile ergeben zusammen ${w.anteile} % und damit mehr als das ganze Depot. Die Rechnung setzt die Beträge trotzdem an — prüfen Sie die Aufteilung.`,
+    );
+  }
 
   if (w.brutto > 0 && w.e === 0) {
     // Nur „steuerfrei“ nennen, wenn auch im Ausland nichts einbehalten wurde —
@@ -209,7 +343,7 @@ function sammleHinweise(
 
   if (w.teilfreistellung > 0) {
     hinweise.push(
-      `${Math.round(w.teilfreistellung * 100)} % der Erträge bleiben durch die Teilfreistellung nach § 20 InvStG von vornherein steuerfrei — sie gleicht die Steuer aus, die der Fonds bereits selbst zahlt.`,
+      `Über alle Positionen hinweg bleiben ${(w.teilfreistellung * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} % der Erträge durch die Teilfreistellung nach § 20 InvStG von vornherein steuerfrei — sie gleicht die Steuer aus, die der Fonds bereits selbst zahlt.`,
     );
   }
 
@@ -229,35 +363,40 @@ function sammleHinweise(
  * konstanter Satz) und streng monoton — ein Intervallhalbierungsverfahren
  * findet die Umkehrung zuverlässig, ohne jede Verzweigung einzeln aufzulösen.
  */
-export function bruttoFuerNetto(
-  zielNettoJahr: number,
-  eingabe: DividendenEingabe,
-  lage: SteuerlicheLage,
-): number {
-  if (zielNettoJahr <= 0) return 0;
-
-  const netto = (brutto: number) =>
-    berechneDividende({ ...eingabe, eingabeart: 'betrag', bruttoJahr: brutto }, lage).nettoJahr;
-
+function loeseMonoton(ziel: number, netto: (wert: number) => number): number {
+  if (ziel <= 0) return 0;
   let unten = 0;
-  let oben = Math.max(1, zielNettoJahr * 3);
-  while (netto(oben) < zielNettoJahr && oben < 1e12) oben *= 2;
-
+  let oben = Math.max(1, ziel * 3);
+  while (netto(oben) < ziel && oben < 1e12) oben *= 2;
   for (let i = 0; i < 60; i++) {
     const mitte = (unten + oben) / 2;
-    if (netto(mitte) < zielNettoJahr) unten = mitte;
+    if (netto(mitte) < ziel) unten = mitte;
     else oben = mitte;
   }
   return cent(oben);
 }
 
-/** Depotwert, der für ein gewünschtes Monatsnetto nötig ist. */
+export function bruttoFuerNetto(
+  zielNettoJahr: number,
+  eingabe: DividendenEingabe,
+  lage: SteuerlicheLage,
+): number {
+  return loeseMonoton(zielNettoJahr, (brutto) =>
+    berechneDividende({ ...eingabe, eingabeart: 'betrag', bruttoJahr: brutto }, lage).nettoJahr);
+}
+
+/**
+ * Depotwert, der für ein gewünschtes Monatsnetto nötig ist — bei unveränderter
+ * Aufteilung des Depots. Alle Positionen wachsen anteilig mit.
+ */
 export function portfolioFuerNetto(
   zielNettoMonat: number,
   eingabe: DividendenEingabe,
   lage: SteuerlicheLage,
 ): number | null {
-  if (eingabe.rendite <= 0) return null;
-  const brutto = bruttoFuerNetto(zielNettoMonat * 12, eingabe, lage);
-  return cent(brutto / (eingabe.rendite / 100));
+  if (eingabe.eingabeart !== 'portfolio') return null;
+  const probe = berechneDividende({ ...eingabe, portfolio: 100_000 }, lage);
+  if (probe.bruttoJahr <= 0) return null;
+  return loeseMonoton(zielNettoMonat * 12, (depot) =>
+    berechneDividende({ ...eingabe, portfolio: depot }, lage).nettoJahr);
 }

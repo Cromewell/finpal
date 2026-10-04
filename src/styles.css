@@ -201,14 +201,15 @@ button { font: inherit; color: inherit; }
 /* --- Reiter -------------------------------------------------------------- */
 
 .tabs {
-  display: inline-flex; gap: 4px; padding: 4px; margin-bottom: 24px;
-  background: var(--surface-sunken); border-radius: var(--radius-pill);
+  display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; margin-bottom: 24px;
+  background: var(--surface-sunken); border-radius: 18px;
   border: 1px solid var(--line);
+  width: fit-content; max-width: 100%;
 }
 
 .tab {
   appearance: none; border: 0; cursor: pointer;
-  padding: 9px 18px; border-radius: var(--radius-pill);
+  padding: 9px 16px; border-radius: var(--radius-pill);
   background: transparent; color: var(--ink-secondary);
   font-size: 14px; font-weight: 550; white-space: nowrap;
   transition: background 120ms ease, color 120ms ease;
@@ -219,22 +220,14 @@ button { font: inherit; color: inherit; }
   box-shadow: 0 1px 2px rgba(11, 11, 11, 0.07);
 }
 
-/* Ab vier Reitern passen die ausgeschriebenen Namen nicht mehr nebeneinander;
-   darunter bleibt nur das Kernwort stehen. */
-@media (max-width: 900px) {
-  .tab__lang { display: none; }
+/* Schmale Geräte: volle Breite, gleichmäßig verteilt und umbrechend. */
+@media (max-width: 720px) {
+  .tabs { width: 100%; }
+  .tab { flex: 1 1 auto; padding: 9px 10px; font-size: 13px; }
 }
 
-@media (max-width: 560px) {
-  .tabs { display: flex; width: 100%; }
-  .tab { flex: 1; padding: 9px 8px; font-size: 13px; }
-}
-
-/* Ganz schmal reicht auch eine Zeile nicht: zwei mal zwei statt waagerecht
-   scrollen — so bleibt jeder Reiter sichtbar und erreichbar. */
-@media (max-width: 440px) {
-  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-  .tab { padding: 9px 6px; }
+@media (max-width: 420px) {
+  .tab { padding: 8px 8px; font-size: 12.5px; }
 }
 
 /* --- Layout zweispaltig -------------------------------------------------- */
@@ -562,7 +555,7 @@ table.ledger tbody tr.row-highlight:hover td { background: var(--accent-wash); }
 .prose a { color: var(--accent-ink); text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .prose ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
 
-.cols { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(248px, 1fr)); }
+.cols { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); }
 
 .trust { display: grid; gap: 12px; }
 .trust__item { display: flex; gap: 12px; align-items: flex-start; }
@@ -576,6 +569,11 @@ table.ledger tbody tr.row-highlight:hover td { background: var(--accent-wash); }
 .kv { display: grid; gap: 8px; font-size: 13.5px; }
 .kv__row { display: flex; gap: 12px; align-items: baseline; border-bottom: 1px solid var(--line); padding-bottom: 7px; }
 .kv__row:last-child { border-bottom: 0; padding-bottom: 0; }
+/* Lange Komposita wie „Solidaritätszuschlag“ oder „Kapitalertragsteuer“ dürfen
+   die Spalte nicht aufdrücken. `anywhere` statt `break-word`: Nur ersteres
+   senkt auch die Mindestbreite, die das Raster für seine Spalten heranzieht. */
+.kv__row { min-width: 0; }
+.kv__key, .kv__val { min-width: 0; hyphens: auto; overflow-wrap: anywhere; }
 .kv__key { color: var(--ink-secondary); }
 .kv__val { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
 
@@ -716,3 +714,15 @@ table.ledger tr.row-kind td { color: var(--ink-secondary); }
 @media (max-width: 560px) {
   .card__head .sankey__modus { margin-left: 0; width: 100%; }
 }
+
+/* Anteilssumme neben der Schaltfläche „Position“ */
+.anteil-summe {
+  display: inline-flex; align-items: center;
+  font-size: 12.5px; color: var(--ink-muted); padding: 0 4px;
+}
+.anteil-summe.is-abweichend { color: color-mix(in srgb, var(--warning) 70%, var(--ink)); font-weight: 550; }
+
+/* Kopfzeile einer Depotposition: Name über die volle Breite, nur der
+   Löschknopf rechts — anders als bei den Haushaltsposten gibt es hier
+   keine Betragsspalte. */
+.posten--kopf { grid-template-columns: minmax(0, 1fr) 30px; }

@@ -7,6 +7,7 @@
  * die Lücke als Fehlbetrag ausgewiesen.
  */
 
+import { neueId } from './id';
 import { cent } from './sozialversicherung';
 
 export interface Unterposten {
@@ -45,13 +46,7 @@ export interface BudgetSummen {
   groessterPosten: { name: string; betrag: number; anteil: number } | null;
 }
 
-let zaehler = 0;
-
-/** Kurze, eindeutige Kennung — bleibt über Speichern und Teilen hinweg stabil. */
-export function neueId(praefix: string): string {
-  zaehler += 1;
-  return `${praefix}${Date.now().toString(36)}${zaehler.toString(36)}`;
-}
+export { neueId };
 
 /** Betrag einer Ausgabe: Summe der Unterposten, sonst der eigene Wert. */
 export function ausgabeBetrag(ausgabe: Ausgabe): number {

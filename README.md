@@ -1,10 +1,9 @@
 # finpal
 
-**Brutto-Netto-, Teilzeit-, Haushalts- und Dividendenrechner für Deutschland —
-Rechtsstand 2026.** Alles rechnet im Browser. Keine Übertragung, kein Server,
-keine Zählpixel.
+**Finanzrechner für Deutschland — Rechtsstand 2026.** Alles rechnet im Browser.
+Keine Übertragung, kein Server, keine Zählpixel.
 
-Vier Werkzeuge in einer Anwendung:
+Sieben Werkzeuge in einer Anwendung:
 
 1. **Brutto-Netto-Rechner** — alle sechs Steuerklassen, alle sechzehn Bundesländer,
    gesetzliche und private Krankenversicherung, Minijob und Übergangsbereich.
@@ -20,7 +19,18 @@ Vier Werkzeuge in einer Anwendung:
    Einzelne und Paare, Teilfreistellung bei Fonds, Kirchensteuer, ausländische
    Quellensteuer. Rechnet wahlweise aus einem Betrag oder aus Depotwert mal
    Dividendenrendite — und sagt umgekehrt, welches Depot ein gewünschtes
-   Monatsnetto trägt.
+   Monatsnetto trägt. Das Depot darf aus **mehreren Positionen** bestehen,
+   etwa 70 % Aktien-ETF und 30 % Einzelaktien, jede mit eigener Rendite,
+   Anlageart und Quellensteuer.
+5. **Kredit** — Annuitätendarlehen mit Tilgungsplan, Sondertilgung und vor allem
+   der **Restschuld am Ende der Zinsbindung**, die zu einem heute unbekannten
+   Zins neu finanziert werden muss.
+6. **Entnahme** — wie lange ein Depot eine gewünschte Entnahme trägt, mit
+   korrekter Besteuerung: steuerpflichtig ist nur der im Verkauf enthaltene
+   **Gewinnanteil**, und der wächst mit jedem Jahr.
+7. **Rente** — gesetzliche Altersrente aus Entgeltpunkten, mit nachgelagerter
+   **Kohortenbesteuerung** und den Beiträgen, die Rentner weiterhin zahlen; die
+   Pflegeversicherung sogar allein. Daraus die Lücke zum Wunschbetrag.
 
 ---
 
@@ -72,6 +82,12 @@ mit `e` = steuerpflichtiger Ertrag, `q` = anrechenbare ausländische Steuer,
 Quellensteuer gleich mit — einschließlich des Effekts, dass sie auch den
 Solidaritätszuschlag mindert.
 
+Bei einem gemischten Depot gilt die Reihenfolge: **Teilfreistellung und
+ausländische Quellensteuer je Position**, der **Sparer-Pauschbetrag dagegen nur
+einmal** für alle Positionen zusammen. Ein Test hält fest, dass ein gemischtes
+Depot dieselbe Steuer kostet wie zwei getrennt gerechnete, die sich einen
+Freibetrag teilen.
+
 ### Was abgedeckt ist
 
 - Einkommensteuertarif 2026 (§ 32a EStG), Vorsorgepauschale, Arbeitnehmer- und
@@ -117,6 +133,38 @@ alle `GET`. Danach keine einzige mehr.
 
 ---
 
+## Wo die drei jüngsten Werkzeuge genauer rechnen als üblich
+
+**Kredit:** Die meisten Rechner zeigen Rate und Gesamtzins. Entscheidend für die
+Sicherheit einer Finanzierung ist aber die **Restschuld am Ende der Zinsbindung**
+— bei 2 % Anfangstilgung sind nach zehn Jahren erst rund ein Viertel getilgt. Ein
+Schieberegler für den Anschlusszins macht sichtbar, was daran hängt: Bei
+ausreichend hohem Anschlusszins ist das Darlehen mit gleicher Rate selbst nach
+50 Jahren nicht getilgt.
+
+**Entnahme:** Beim Verkauf von Anteilen ist nicht die Entnahme steuerpflichtig,
+sondern allein der darin enthaltene **Gewinn**. Der Rechner führt den
+Einstandswert mit und besteuert nur den realisierten Gewinn — mit
+Teilfreistellung, Sparer-Pauschbetrag und der Formel des § 32d. Über 30 Jahre
+wächst der Gewinnanteil typisch von etwa 40 % auf über 85 %, die Steuer also auf
+ein Vielfaches, obwohl die Entnahme real gleich bleibt.
+
+**Rente:** Zwei Posten fehlen in fast jeder Überschlagsrechnung — die
+nachgelagerte Besteuerung nach dem Jahr des Rentenbeginns (84 % bei Beginn 2026,
+je späterem Jahr 0,5 Punkte mehr) und die Beiträge der Rentner, von denen die
+Pflegeversicherung **allein** getragen wird. Zusammen sind das schnell ein
+Viertel der Bruttorente.
+
+## Jedes Werkzeug zeigt nur seine eigenen Angaben
+
+Überschrift, Einleitung, Rechengrößen, Methodik und Haftungshinweis richten sich
+nach dem gewählten Reiter. Der Hinweis auf den Lohnsteuer-Programmablaufplan
+erscheint nur dort, wo er auch gilt; der Geldfluss-Rechner führt gar keine
+Rechengrößen auf, weil er allein mit Ihren eigenen Zahlen arbeitet. Ein
+Browser-Test prüft für jeden Reiter, dass die erwarteten Begriffe vorkommen —
+und die fremden eben nicht. Begriffe wie „Programmablaufplan“, „Annuitätendarlehen“
+oder „Regelaltersgrenze“ erscheinen ausschließlich dort, wo sie gelten.
+
 ## Entwicklung
 
 Voraussetzung: [Bun](https://bun.sh) (oder Node 20+ mit npm).
@@ -124,7 +172,7 @@ Voraussetzung: [Bun](https://bun.sh) (oder Node 20+ mit npm).
 ```bash
 bun install
 bun run dev        # Entwicklungsserver
-bun run test       # 360 Tests, darunter die 207 amtlichen Vektoren
+bun run test       # 440 Tests, darunter die 207 amtlichen Vektoren
 bun run typecheck  # TypeScript im strict-Modus
 bun run build      # statische Dateien nach dist/
 ```
@@ -157,6 +205,10 @@ src/lib/
   budget.ts                   Haushaltsmodell: Einnahmen, Ausgaben, Unterposten
   sankey.ts                   Layout des Geldflussdiagramms (reine Funktion)
   dividende.ts                Abgeltungsteuer, Teilfreistellung, Rückrechnung aufs Depot
+  tarif.ts                    Einkommensteuertarif § 32a, Splitting, Solidaritätszuschlag
+  kredit.ts                   Annuitätendarlehen, Tilgungsplan, Restschuld
+  entnahme.ts                 Entnahmeplan mit Besteuerung des Gewinnanteils
+  rente.ts                    Entgeltpunkte, Kohortenbesteuerung, Rentenlücke
   format.ts                   deutsche Zahlenformate und ihre Rückumwandlung
 src/components/               Oberfläche (React, handgeschriebenes CSS)
 ```

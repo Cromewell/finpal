@@ -8,8 +8,12 @@ import {
 } from './lib/constants';
 import {
   berechneDividende, defaultDividendenEingabe,
-  type DividendenEingabe,
+  type Depotposition, type DividendenEingabe,
 } from './lib/dividende';
+import { berechneKredit, defaultKreditEingabe, type KreditEingabe } from './lib/kredit';
+import { berechneEntnahme, defaultEntnahmeEingabe, type EntnahmeEingabe } from './lib/entnahme';
+import { berechneRente, defaultRenteEingabe, type RenteEingabe } from './lib/rente';
+import { neueId } from './lib/id';
 import { eur, num, prozent, stunden as fmtStunden } from './lib/format';
 import {
   ladeEingaben, ladeThema, setzeSpeichernErlaubt, sichereEingaben, sichereThema,
@@ -23,18 +27,16 @@ import { BudgetFormular } from './components/BudgetFormular';
 import { GeldflussAnsicht } from './components/GeldflussAnsicht';
 import { DividendenFormular } from './components/DividendenFormular';
 import { DividendenAnsicht } from './components/DividendenAnsicht';
+import { KreditFormular } from './components/KreditFormular';
+import { KreditAnsicht } from './components/KreditAnsicht';
+import { EntnahmeFormular } from './components/EntnahmeFormular';
+import { EntnahmeAnsicht } from './components/EntnahmeAnsicht';
+import { RenteFormular } from './components/RenteFormular';
+import { RenteAnsicht } from './components/RenteAnsicht';
 import { MethodikKarte, PrivatsphaereKarte, RechengroessenKarte } from './components/Infoabschnitte';
 import { Werkzeugleiste } from './components/Werkzeugleiste';
 import { Card, IconClock, IconCoin, IconFlow, IconMoon, IconOffline, IconScale, IconShield, IconSun } from './components/ui';
-
-type Reiter = 'brutto-netto' | 'teilzeit' | 'geldfluss' | 'dividenden';
-
-const REITER: { wert: Reiter; kurz: string; lang: string }[] = [
-  { wert: 'brutto-netto', kurz: 'Brutto-Netto', lang: '-Rechner' },
-  { wert: 'teilzeit', kurz: 'Teilzeit', lang: ' & Stundenreduktion' },
-  { wert: 'geldfluss', kurz: 'Geldfluss', lang: ' & Haushalt' },
-  { wert: 'dividenden', kurz: 'Dividenden', lang: ' & Depot' },
-];
+import { REITER, type Reiter } from './reiter';
 
 interface Zustand {
   eingabe: PayrollInput;
@@ -42,6 +44,9 @@ interface Zustand {
   stundenZiel: number;
   budget: Budget;
   dividenden: DividendenEingabe;
+  kredit: KreditEingabe;
+  entnahme: EntnahmeEingabe;
+  rente: RenteEingabe;
   reiter: Reiter;
 }
 
@@ -51,6 +56,9 @@ const START: Zustand = {
   stundenZiel: 32,
   budget: beispielBudget(),
   dividenden: defaultDividendenEingabe(),
+  kredit: defaultKreditEingabe(),
+  entnahme: defaultEntnahmeEingabe(),
+  rente: defaultRenteEingabe(),
   reiter: 'brutto-netto',
 };
 
@@ -62,9 +70,53 @@ function zusammenfuehren(basis: Zustand, teil: Partial<Zustand> | null): Zustand
     stundenIst: typeof teil.stundenIst === 'number' && teil.stundenIst > 0 ? teil.stundenIst : basis.stundenIst,
     stundenZiel: typeof teil.stundenZiel === 'number' && teil.stundenZiel > 0 ? teil.stundenZiel : basis.stundenZiel,
     budget: istBudget(teil.budget) ? teil.budget : basis.budget,
-    dividenden: { ...basis.dividenden, ...(teil.dividenden ?? {}) },
+    dividenden: dividendenAus(basis.dividenden, teil.dividenden),
+    kredit: { ...basis.kredit, ...(teil.kredit ?? {}) },
+    entnahme: { ...basis.entnahme, ...(teil.entnahme ?? {}) },
+    rente: { ...basis.rente, ...(teil.rente ?? {}) },
     reiter: REITER.some((r) => r.wert === teil.reiter) ? teil.reiter! : basis.reiter,
   };
+}
+
+/**
+ * Übernimmt Dividenden-Eingaben aus Link oder Speicher.
+ *
+ * Ältere Stände kannten statt der Positionsliste nur eine einzelne Rendite.
+ * Daraus wird eine Position gebaut, damit ein alter Link nicht stillschweigend
+ * ein anderes Depot zeigt.
+ */
+function dividendenAus(
+  basis: DividendenEingabe,
+  teil: Partial<DividendenEingabe> | undefined,
+): DividendenEingabe {
+  if (!teil) return basis;
+  const zusammen = { ...basis, ...teil };
+
+  if (istPositionsliste(teil.positionen)) return { ...zusammen, positionen: teil.positionen };
+
+  const alteRendite = (teil as { rendite?: unknown }).rendite;
+  if (typeof alteRendite === 'number' && alteRendite > 0) {
+    return {
+      ...zusammen,
+      positionen: [{
+        id: neueId('p'),
+        name: ANLAGEART_MAP[zusammen.anlageart].name,
+        anteil: 100,
+        rendite: alteRendite,
+        anlageart: zusammen.anlageart,
+        quellensteuerProzent: zusammen.quellensteuerProzent,
+      }],
+    };
+  }
+  return { ...zusammen, positionen: basis.positionen };
+}
+
+function istPositionsliste(wert: unknown): wert is Depotposition[] {
+  return Array.isArray(wert) && wert.length > 0 && wert.every((p) =>
+    typeof p?.id === 'string'
+    && typeof p?.anteil === 'number'
+    && typeof p?.rendite === 'number'
+    && typeof p?.anlageart === 'string');
 }
 
 /** Prüft ein aus Link oder Speicher stammendes Budget, bevor es übernommen wird. */
@@ -82,13 +134,62 @@ function anfangszustand(): Zustand {
   return zusammenfuehren(START, ladeEingaben<Zustand>());
 }
 
+/**
+ * Überschrift und Einleitung je Werkzeug. Die Seite soll nur beschreiben, was
+ * gerade gewählt ist — ein Hinweis auf den Lohnsteuer-Programmablaufplan hat
+ * über dem Haushaltsrechner nichts verloren.
+ */
+const HERO: Record<Reiter, { titel: string; lead: string }> = {
+  'brutto-netto': {
+    titel: 'Was von Ihrem Gehalt übrig bleibt.',
+    lead: `Brutto zu Netto für ${JAHR}: alle sechs Steuerklassen, alle sechzehn Bundesländer, gesetzliche und private Krankenversicherung, Minijob und Übergangsbereich. Der Steuerteil folgt dem amtlichen Programmablaufplan des Bundesfinanzministeriums — und alles läuft ausschließlich auf Ihrem Gerät.`,
+  },
+  teilzeit: {
+    titel: 'Was eine kürzere Woche wirklich kostet.',
+    lead: 'Weniger Stunden heißt weniger brutto — im Netto kommt davon aber nur etwa die Hälfte an. Dieser Rechner zeigt den Unterschied, die Kosten je aufgegebener Wochenstunde und was die Reduktion für Ihre spätere Rente bedeutet.',
+  },
+  geldfluss: {
+    titel: 'Wohin Ihr Geld im Monat fließt.',
+    lead: 'Mehrere Einnahmequellen laufen in einen Topf, davon gehen Ausgaben mit beliebigen Unterposten ab. Das Sankey-Diagramm zeigt jeden Strang maßstabsgetreu — und macht sichtbar, wo der größte Hebel liegt.',
+  },
+  kredit: {
+    titel: 'Was ein Darlehen wirklich kostet.',
+    lead: 'Rate, Tilgungsplan und Zinslast eines Annuitätendarlehens — und vor allem: was am Ende der Zinsbindung an Restschuld übrig bleibt. Genau dieser Betrag entscheidet darüber, wie sicher Ihre Finanzierung ist.',
+  },
+  entnahme: {
+    titel: 'Wie lange Ihr Depot trägt.',
+    lead: 'Entnahmeplan mit korrekter Besteuerung: Steuerpflichtig ist beim Verkauf nur der enthaltene Gewinn, und dessen Anteil wächst mit jedem Jahr. Der Rechner sagt außerdem, welches Startkapital nötig wäre.',
+  },
+  rente: {
+    titel: 'Was von der gesetzlichen Rente bleibt.',
+    lead: 'Entgeltpunkte, nachgelagerte Besteuerung nach Kohorte und die Beiträge, die Rentner weiterhin zahlen — die Pflegeversicherung sogar allein. Daraus ergibt sich die Lücke zu Ihrem Wunschbetrag, in heutiger Kaufkraft.',
+  },
+  dividenden: {
+    titel: 'Was von Ihrer Dividende ankommt.',
+    lead: 'Abgeltungsteuer nach § 32d EStG: Sparer-Pauschbetrag für Einzelne und Paare, Teilfreistellung bei Fonds, Kirchensteuer und ausländische Quellensteuer. Das Depot darf aus mehreren Positionen bestehen — und der Rechner sagt umgekehrt, welches Depot ein gewünschtes Monatsnetto trägt.',
+  },
+};
+
+/** Der Haftungshinweis, der zum jeweiligen Werkzeug passt. */
+const HAFTUNG: Record<Reiter, string> = {
+  'brutto-netto': `finpal rechnet den Lohnsteuerabzug ${JAHR} nach dem amtlichen Programmablaufplan des Bundesfinanzministeriums. Ergebnis ohne Gewähr und keine steuerliche Beratung — verbindlich ist die Abrechnung Ihres Arbeitgebers.`,
+  teilzeit: `finpal rechnet den Lohnsteuerabzug ${JAHR} nach dem amtlichen Programmablaufplan des Bundesfinanzministeriums. Die Rentenwirkung ist eine Hochrechnung in heutiger Kaufkraft. Ergebnis ohne Gewähr und keine steuerliche Beratung.`,
+  geldfluss: 'Der Geldfluss-Rechner ordnet allein die Zahlen, die Sie selbst eintragen — er enthält keine Steuerberechnung. Alle Beträge verstehen sich als Monatswerte.',
+  dividenden: `finpal rechnet die Abgeltungsteuer ${JAHR} nach der Formel des § 32d Abs. 1 EStG. Ergebnis ohne Gewähr und keine steuerliche Beratung — maßgeblich ist die Steuerbescheinigung Ihrer Bank.`,
+  kredit: 'Der Tilgungsplan rechnet mit gleichbleibender Rate und den von Ihnen angenommenen Zinsen. Nebenkosten sind nicht enthalten — maßgeblich ist das Angebot Ihrer Bank.',
+  entnahme: 'Der Entnahmeplan unterstellt eine gleichmäßige Rendite. Echte Märkte schwanken, und schlechte Jahre zu Beginn wirken besonders stark. Ergebnis ohne Gewähr.',
+  rente: `finpal rechnet die gesetzliche Altersrente ${JAHR} mit Entgeltpunkten, Kohortenbesteuerung und den Beiträgen der Rentner. Eine Hochrechnung unter Annahmen — verbindlich ist Ihre Renteninformation.`,
+};
+
 export default function App() {
   const [zustand, setzeZustand] = useState<Zustand>(anfangszustand);
   const [thema, setzeThemaZustand] = useState<Thema>(ladeThema);
   const [speichern, setzeSpeichern] = useState(speichernErlaubt);
   const [meldung, setzeMeldung] = useState<string | null>(null);
 
-  const { eingabe, stundenIst, stundenZiel, budget, dividenden, reiter } = zustand;
+  const {
+    eingabe, stundenIst, stundenZiel, budget, dividenden, kredit, entnahme, rente, reiter,
+  } = zustand;
 
   // Thema auf das Wurzelelement schreiben.
   useEffect(() => {
@@ -130,6 +231,23 @@ export default function App() {
   const patchDividenden = useCallback((teil: Partial<DividendenEingabe>) => {
     setzeZustand((alt) => ({ ...alt, dividenden: { ...alt.dividenden, ...teil } }));
   }, []);
+  const patchKredit = useCallback((teil: Partial<KreditEingabe>) => {
+    setzeZustand((alt) => ({ ...alt, kredit: { ...alt.kredit, ...teil } }));
+  }, []);
+  const patchEntnahme = useCallback((teil: Partial<EntnahmeEingabe>) => {
+    setzeZustand((alt) => ({ ...alt, entnahme: { ...alt.entnahme, ...teil } }));
+  }, []);
+  const patchRente = useCallback((teil: Partial<RenteEingabe>) => {
+    setzeZustand((alt) => ({ ...alt, rente: { ...alt.rente, ...teil } }));
+  }, []);
+
+  const darlehen = useMemo(() => berechneKredit(kredit), [kredit]);
+  const entnahmePlan = useMemo(
+    () => berechneEntnahme(entnahme, steuerlicheLage), [entnahme, steuerlicheLage],
+  );
+  const rentenlage = useMemo(
+    () => berechneRente(rente, steuerlicheLage, JAHR), [rente, steuerlicheLage],
+  );
 
   const schalteSpeichern = (wert: boolean) => {
     setzeSpeichernErlaubt(wert);
@@ -187,8 +305,12 @@ export default function App() {
         ['Kirchensteuer', num(dividende.kirchensteuer), num(dividende.kirchensteuer / 12)],
         ['Steuern gesamt', num(dividende.steuernGesamt), num(dividende.steuernGesamt / 12)],
         ['Nettodividende', num(dividende.nettoJahr), num(dividende.nettoMonat)],
-        ['Anlageart', ANLAGEART_MAP[dividenden.anlageart].name, ''],
         ['Depotwert', dividende.portfolio === null ? '' : num(dividende.portfolio), ''],
+        ...dividende.positionen.map((pos) => [
+          `Position: ${pos.name || ANLAGEART_MAP[pos.anlageart].name}`,
+          num(pos.bruttoJahr),
+          `${num(pos.anteil)} % Anteil, ${pos.rendite === null ? '' : num(pos.rendite)} % Rendite`,
+        ]),
       ];
       const inhalt = zeilen.map((z) => z.map((f) => `"${f.replace(/"/g, '""')}"`).join(';')).join('\r\n');
       ladeDateiHerunter(`finpal-dividenden-${JAHR}.csv`, inhalt, 'text/csv');
@@ -226,6 +348,21 @@ export default function App() {
     setzeMeldung('CSV im Browser erzeugt — ohne Umweg über einen Server');
   };
 
+  // Ein Beispielsatz, der zum gewählten Werkzeug gehört.
+  const beispielZeile = reiter === 'brutto-netto'
+    ? `Beispiel: ${eur(abrechnung.brutto.monat)} brutto in Steuerklasse ${abrechnung.eingabe.steuerklasse} ergeben ${eur(abrechnung.netto.monat)} netto — eine Abgabenquote von ${prozent(abrechnung.abgabenquote)}.`
+    : reiter === 'teilzeit'
+      ? `Beispiel: Von ${fmtStunden(stundenIst)} auf ${fmtStunden(stundenZiel)} Wochenstunden kostet ${eur(teilzeit.nettoVerlustMonat)} netto im Monat — bei ${eur(teilzeit.bruttoVerlustMonat)} weniger brutto.`
+      : reiter === 'geldfluss'
+        ? `Beispiel: Von ${eur(haushalt.einnahmen)} Einnahmen gehen ${eur(haushalt.ausgaben)} für Ausgaben ab — ${haushalt.saldo < 0 ? `es fehlen ${eur(-haushalt.saldo)}` : `übrig bleiben ${eur(haushalt.saldo)}`}.`
+        : reiter === 'dividenden'
+          ? `Beispiel: ${dividende.portfolio === null ? eur(dividende.bruttoJahr) + ' Bruttodividende' : eur(dividende.portfolio) + ' Depot'} ergeben ${eur(dividende.nettoMonat)} netto im Monat — nach ${prozent(dividende.effektiverSteuersatz)} Steuern.`
+          : reiter === 'kredit'
+            ? `Beispiel: ${eur(kredit.darlehen)} zu ${kredit.sollzins} % ergeben ${eur(darlehen.monatsrate)} Rate — nach ${kredit.zinsbindung} Jahren stehen noch ${eur(darlehen.restschuldNachBindung)} offen.`
+            : reiter === 'entnahme'
+              ? `Beispiel: ${eur(entnahme.startkapital)} tragen ${eur(entnahme.entnahmeNettoMonat)} netto im Monat ${entnahmePlan.traegtDurch ? `über ${entnahme.dauerJahre} Jahre` : `rund ${Math.round((entnahmePlan.reichweiteMonate ?? 0) / 12)} Jahre`}.`
+              : `Beispiel: ${num(rentenlage.entgeltpunkteGesamt)} Entgeltpunkte ergeben ${eur(rentenlage.bruttoRenteMonat)} brutto — davon bleiben ${eur(rentenlage.nettoRenteMonat)} netto.`;
+
   const zuruecksetzen = () => {
     setzeZustand({ ...START, reiter });
     if (window.location.hash) window.history.replaceState(null, '', window.location.pathname);
@@ -240,7 +377,7 @@ export default function App() {
             <span className="brand__mark" aria-hidden="true">fp</span>
             <span>
               <span className="brand__name">finpal</span>
-              <span className="brand__claim"> · Brutto, Netto und Teilzeit für {JAHR}</span>
+              <span className="brand__claim"> · Gehalt, Haushalt und Depot für {JAHR}</span>
             </span>
           </div>
 
@@ -267,23 +404,32 @@ export default function App() {
 
       <main className="shell">
         <div className="hero">
-          <h1 className="hero__title">
-            Was von Ihrem Gehalt übrig bleibt — und wo es am Ende des Monats hingeflossen ist.
-          </h1>
-          <p className="hero__lead">
-            Vier Rechner für {JAHR}: Brutto zu Netto für alle Steuerklassen und Bundesländer, eine
-            Vorausschau für eine geplante Stundenreduktion, ein Geldflussbild Ihres Haushalts und
-            die Abgeltungsteuer auf Dividenden. Der Steuerteil folgt dem amtlichen
-            Programmablaufplan des Bundesfinanzministeriums — und alles läuft ausschließlich auf
-            Ihrem Gerät.
-          </p>
+          <h1 className="hero__title">{HERO[reiter].titel}</h1>
+          <p className="hero__lead">{HERO[reiter].lead}</p>
           <div className="hero__facts">
             <span className="fact"><IconShield />Keine Übertragung Ihrer Daten</span>
             <span className="fact"><IconOffline />Funktioniert offline</span>
-            <span className="fact"><IconScale />Amtlicher Rechenkern {JAHR}</span>
-            <span className="fact"><IconClock />Teilzeit-Vorausschau inklusive Rente</span>
-            <span className="fact"><IconFlow />Geldfluss als Sankey-Diagramm</span>
-            <span className="fact"><IconCoin />Dividenden nach Abgeltungsteuer</span>
+            {reiter === 'brutto-netto' && (
+              <span className="fact"><IconScale />Amtlicher Rechenkern {JAHR}</span>
+            )}
+            {reiter === 'teilzeit' && (
+              <span className="fact"><IconClock />Amtlicher Rechenkern inklusive Rentenwirkung</span>
+            )}
+            {reiter === 'geldfluss' && (
+              <span className="fact"><IconFlow />Sankey-Diagramm mit Unterposten</span>
+            )}
+            {reiter === 'dividenden' && (
+              <span className="fact"><IconCoin />Abgeltungsteuer nach § 32d EStG</span>
+            )}
+            {reiter === 'kredit' && (
+              <span className="fact"><IconScale />Restschuld und Anschlusszins im Blick</span>
+            )}
+            {reiter === 'entnahme' && (
+              <span className="fact"><IconCoin />Besteuerung nur des Gewinnanteils</span>
+            )}
+            {reiter === 'rente' && (
+              <span className="fact"><IconClock />Kohortenbesteuerung und Rentnerbeiträge</span>
+            )}
           </div>
         </div>
 
@@ -293,16 +439,34 @@ export default function App() {
               key={r.wert}
               type="button" role="tab" className="tab"
               aria-selected={reiter === r.wert}
+              title={r.titel}
               onClick={() => setzeZustand((alt) => ({ ...alt, reiter: r.wert }))}
             >
-              {r.kurz}<span className="tab__lang">{r.lang}</span>
+              {r.kurz}
             </button>
           ))}
         </div>
 
         <div className="layout">
           <div className="layout__inputs">
-            {reiter === 'dividenden' ? (
+            {reiter === 'kredit' ? (
+              <Card title="Ihre Angaben" note={`${eur(darlehen.monatsrate)} im Monat`}>
+                <KreditFormular werte={kredit} patch={patchKredit} />
+              </Card>
+            ) : reiter === 'entnahme' ? (
+              <Card title="Ihre Angaben" note={entnahmePlan.traegtDurch ? 'trägt durch' : 'reicht nicht'}>
+                <EntnahmeFormular werte={entnahme} patch={patchEntnahme} />
+              </Card>
+            ) : reiter === 'rente' ? (
+              <Card title="Ihre Angaben" note={`Rentenbeginn ${rentenlage.rentenbeginnJahr}`}>
+                <RenteFormular
+                  werte={rente}
+                  patch={patchRente}
+                  person={eingabe}
+                  patchPerson={patch}
+                />
+              </Card>
+            ) : reiter === 'dividenden' ? (
               <Card title="Ihre Angaben" note={`${eur(dividende.bruttoJahr)} brutto`}>
                 <DividendenFormular
                   werte={dividenden}
@@ -353,29 +517,24 @@ export default function App() {
             {reiter === 'dividenden' && (
               <DividendenAnsicht eingabe={dividenden} lage={steuerlicheLage} />
             )}
+            {reiter === 'kredit' && <KreditAnsicht eingabe={kredit} />}
+            {reiter === 'entnahme' && <EntnahmeAnsicht eingabe={entnahme} lage={steuerlicheLage} />}
+            {reiter === 'rente' && <RenteAnsicht eingabe={rente} lage={steuerlicheLage} />}
           </div>
         </div>
 
         <div className="cols" style={{ marginTop: 32 }}>
           <PrivatsphaereKarte speichern={speichern} setzeSpeichern={schalteSpeichern} />
-          <RechengroessenKarte />
+          <RechengroessenKarte reiter={reiter} />
         </div>
 
         <div style={{ marginTop: 16 }}>
-          <MethodikKarte />
+          <MethodikKarte reiter={reiter} />
         </div>
 
         <footer className="footer">
-          <p>
-            finpal rechnet den Lohnsteuerabzug {JAHR} nach dem amtlichen Programmablaufplan des
-            Bundesfinanzministeriums. Ergebnis ohne Gewähr und keine steuerliche Beratung —
-            verbindlich ist die Abrechnung Ihres Arbeitgebers.
-          </p>
-          <p>
-            Beispiel: {eur(abrechnung.brutto.monat)} brutto in Steuerklasse{' '}
-            {abrechnung.eingabe.steuerklasse} ergeben {eur(abrechnung.netto.monat)} netto — eine
-            Abgabenquote von {prozent(abrechnung.abgabenquote)}.
-          </p>
+          <p>{HAFTUNG[reiter]}</p>
+          <p>{beispielZeile}</p>
         </footer>
       </main>
 

@@ -1,14 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
-  berechneDividende, bruttodividende, bruttoFuerNetto, defaultDividendenEingabe,
-  portfolioFuerNetto, sparerPauschbetrag,
-  type DividendenEingabe, type SteuerlicheLage,
+  anteilSumme, berechneDividende, bruttodividende, bruttoFuerNetto,
+  defaultDividendenEingabe, portfolioFuerNetto, sparerPauschbetrag,
+  type Depotposition, type DividendenEingabe, type SteuerlicheLage,
 } from '../dividende';
 import { KAPITAL } from '../constants';
 
 const ohneKirche: SteuerlicheLage = { kirchensteuer: false, bundesland: 'NW' };
 const mitKircheNW: SteuerlicheLage = { kirchensteuer: true, bundesland: 'NW' };   // 9 %
 const mitKircheBY: SteuerlicheLage = { kirchensteuer: true, bundesland: 'BY' };   // 8 %
+
+/** Depot aus einer einzigen Position. */
+const einePosition = (teil: Partial<Depotposition> = {}): Depotposition[] => [{
+  id: 'p1', name: 'Test', anteil: 100, rendite: 3,
+  anlageart: 'aktien', quellensteuerProzent: 0, ...teil,
+}];
 
 /** Grundfall: Einzelaktien, Pauschbetrag bereits anderweitig verbraucht. */
 const voll = (patch: Partial<DividendenEingabe> = {}): DividendenEingabe => ({
@@ -23,7 +29,8 @@ const voll = (patch: Partial<DividendenEingabe> = {}): DividendenEingabe => ({
 describe('Bruttodividende', () => {
   it('ergibt sich aus Portfoliowert und Rendite', () => {
     expect(bruttodividende({
-      ...defaultDividendenEingabe(), eingabeart: 'portfolio', portfolio: 100_000, rendite: 3.5,
+      ...defaultDividendenEingabe(), eingabeart: 'portfolio', portfolio: 100_000,
+      positionen: einePosition({ rendite: 3.5 }),
     })).toBe(3500);
   });
 
@@ -33,7 +40,9 @@ describe('Bruttodividende', () => {
 
   it('wertet negative Eingaben als null', () => {
     expect(bruttodividende(voll({ bruttoJahr: -500 }))).toBe(0);
-    expect(bruttodividende({ ...defaultDividendenEingabe(), portfolio: -1000, rendite: 3 })).toBe(0);
+    expect(bruttodividende({
+      ...defaultDividendenEingabe(), portfolio: -1000, positionen: einePosition({ rendite: 3 }),
+    })).toBe(0);
   });
 });
 
@@ -179,7 +188,7 @@ describe('Ausländische Quellensteuer', () => {
 });
 
 describe('Rückrechnung', () => {
-  const eingabe = voll({ pauschbetragVerbraucht: 0, rendite: 3.5 });
+  const eingabe = voll({ pauschbetragVerbraucht: 0 });
 
   it('findet die Bruttodividende für ein gewünschtes Netto', () => {
     for (const ziel of [500, 1000, 5000, 24_000]) {
@@ -205,24 +214,28 @@ describe('Rückrechnung', () => {
     expect(bruttoFuerNetto(-100, eingabe, ohneKirche)).toBe(0);
   });
 
-  it('errechnet den nötigen Depotwert aus der Rendite', () => {
-    const noetig = portfolioFuerNetto(1000, { ...eingabe, rendite: 4 }, ohneKirche);
+  it('errechnet den nötigen Depotwert aus der Aufteilung', () => {
+    const depot: DividendenEingabe = {
+      ...eingabe, eingabeart: 'portfolio', positionen: einePosition({ rendite: 4 }),
+    };
+    const noetig = portfolioFuerNetto(1000, depot, ohneKirche);
     expect(noetig).not.toBeNull();
-    const geprueft = berechneDividende(
-      { ...eingabe, eingabeart: 'portfolio', portfolio: noetig!, rendite: 4 }, ohneKirche);
+    const geprueft = berechneDividende({ ...depot, portfolio: noetig! }, ohneKirche);
     expect(geprueft.nettoMonat).toBeCloseTo(1000, 0);
   });
 
   it('kann ohne Rendite keinen Depotwert nennen', () => {
-    expect(portfolioFuerNetto(1000, { ...eingabe, rendite: 0 }, ohneKirche)).toBeNull();
+    expect(portfolioFuerNetto(1000, {
+      ...eingabe, eingabeart: 'portfolio', positionen: einePosition({ rendite: 0 }),
+    }, ohneKirche)).toBeNull();
   });
 });
 
 describe('Kennzahlen', () => {
   it('weist die Nettorendite auf den Depotwert aus', () => {
     const r = berechneDividende({
-      ...defaultDividendenEingabe(), eingabeart: 'portfolio',
-      portfolio: 200_000, rendite: 3, pauschbetragVerbraucht: 1000, anlageart: 'aktien',
+      ...defaultDividendenEingabe(), eingabeart: 'portfolio', portfolio: 200_000,
+      positionen: einePosition({ rendite: 3 }), pauschbetragVerbraucht: 1000,
     }, ohneKirche);
     expect(r.bruttoJahr).toBe(6000);
     expect(r.nettoRendite).toBeCloseTo(r.nettoJahr / 200_000, 8);
@@ -264,5 +277,136 @@ describe('Hinweistexte', () => {
     const text = r.hinweise.join(' ');
     expect(text).toMatch(/350,00/);      // deutsches Dezimalkomma
     expect(text).not.toMatch(/350\.00/); // nicht die englische Schreibweise
+  });
+});
+
+describe('Gemischtes Depot', () => {
+  /** 70 % Aktien-ETF mit 2,5 %, 30 % Einzelaktien mit 4 %. */
+  const gemischt = (teil: Partial<DividendenEingabe> = {}): DividendenEingabe => ({
+    ...defaultDividendenEingabe(),
+    eingabeart: 'portfolio',
+    portfolio: 200_000,
+    pauschbetragVerbraucht: 0,
+    positionen: [
+      { id: 'etf', name: 'Aktien-ETF', anteil: 70, rendite: 2.5, anlageart: 'aktienfonds', quellensteuerProzent: 0 },
+      { id: 'akt', name: 'Einzelaktien', anteil: 30, rendite: 4, anlageart: 'aktien', quellensteuerProzent: 0 },
+    ],
+    ...teil,
+  });
+
+  it('teilt den Depotwert nach den Anteilen auf', () => {
+    const r = berechneDividende(gemischt(), ohneKirche);
+    expect(r.positionen.map((p) => p.depotwert)).toEqual([140_000, 60_000]);
+    expect(r.positionen.map((p) => p.bruttoJahr)).toEqual([3500, 2400]);
+    expect(r.bruttoJahr).toBe(5900);
+  });
+
+  it('weist die gewichtete Mischrendite aus', () => {
+    // 0,7 × 2,5 % + 0,3 × 4 % = 2,95 %
+    expect(berechneDividende(gemischt(), ohneKirche).mischrendite).toBeCloseTo(2.95, 4);
+  });
+
+  it('wendet die Teilfreistellung je Position an', () => {
+    const r = berechneDividende(gemischt(), ohneKirche);
+    expect(r.positionen[0]!.teilfreigestellt).toBe(1050); // 30 % von 3.500
+    expect(r.positionen[1]!.teilfreigestellt).toBe(0);    // Einzelaktien
+    expect(r.teilfreigestellt).toBe(1050);
+    // Wirksamer Satz über das ganze Depot: 1.050 / 5.900
+    expect(r.teilfreistellungssatz).toBeCloseTo(1050 / 5900, 8);
+  });
+
+  it('zieht den Sparer-Pauschbetrag nur einmal für das ganze Depot ab', () => {
+    const r = berechneDividende(gemischt(), ohneKirche);
+    expect(r.ertragSteuerpflichtig).toBe(5900 - 1050);
+    expect(r.pauschbetragGenutzt).toBe(1000);
+    expect(r.bemessungsgrundlage).toBe(3850);
+    expect(r.kapitalertragsteuer).toBeCloseTo(3850 * 0.25, 2);
+  });
+
+  it('ergibt dasselbe wie zwei getrennt gerechnete Depots mit geteiltem Freibetrag', () => {
+    const zusammen = berechneDividende(gemischt(), mitKircheNW);
+    const nurEtf = berechneDividende(gemischt({
+      positionen: [{ id: 'etf', name: 'ETF', anteil: 70, rendite: 2.5, anlageart: 'aktienfonds', quellensteuerProzent: 0 }],
+      pauschbetragVerbraucht: 0,
+    }), mitKircheNW);
+    const nurAktien = berechneDividende(gemischt({
+      positionen: [{ id: 'akt', name: 'Aktien', anteil: 30, rendite: 4, anlageart: 'aktien', quellensteuerProzent: 0 }],
+      // Der ETF-Teil hat den Pauschbetrag bereits aufgebraucht.
+      pauschbetragVerbraucht: nurEtf.pauschbetragGenutzt,
+    }), mitKircheNW);
+    expect(zusammen.steuernGesamt).toBeCloseTo(nurEtf.steuernGesamt + nurAktien.steuernGesamt, 1);
+  });
+
+  it('rechnet Quellensteuer nur auf der Aktienposition', () => {
+    const r = berechneDividende(gemischt({
+      positionen: [
+        { id: 'etf', name: 'ETF', anteil: 70, rendite: 2.5, anlageart: 'aktienfonds', quellensteuerProzent: 30 },
+        { id: 'akt', name: 'US-Aktien', anteil: 30, rendite: 4, anlageart: 'aktien', quellensteuerProzent: 15 },
+      ],
+    }), ohneKirche);
+    expect(r.positionen[0]!.quellensteuer).toBe(0);      // Fonds: auf Fondsebene verrechnet
+    expect(r.positionen[1]!.quellensteuer).toBe(360);    // 15 % von 2.400
+    expect(r.quellensteuer).toBe(360);
+  });
+
+  it('bilanziert über alle Positionen hinweg', () => {
+    for (const lage of [ohneKirche, mitKircheNW]) {
+      const r = berechneDividende(gemischt(), lage);
+      expect(r.bruttoJahr).toBeCloseTo(r.positionen.reduce((s, p) => s + p.bruttoJahr, 0), 2);
+      expect(r.nettoJahr).toBeCloseTo(r.bruttoJahr - r.steuernGesamt, 2);
+      expect(r.ertragSteuerpflichtig).toBeCloseTo(
+        r.positionen.reduce((s, p) => s + p.steuerpflichtig, 0), 2);
+    }
+  });
+
+  it('meldet, wenn die Anteile nicht 100 % ergeben', () => {
+    const zuwenig = berechneDividende(gemischt({
+      positionen: [
+        { id: 'a', name: 'ETF', anteil: 70, rendite: 2.5, anlageart: 'aktienfonds', quellensteuerProzent: 0 },
+        { id: 'b', name: 'Aktien', anteil: 20, rendite: 4, anlageart: 'aktien', quellensteuerProzent: 0 },
+      ],
+    }), ohneKirche);
+    expect(zuwenig.anteilSumme).toBe(90);
+    expect(zuwenig.hinweise.join(' ')).toMatch(/keine Dividende/);
+
+    const zuviel = berechneDividende(gemischt({
+      positionen: [
+        { id: 'a', name: 'ETF', anteil: 70, rendite: 2.5, anlageart: 'aktienfonds', quellensteuerProzent: 0 },
+        { id: 'b', name: 'Aktien', anteil: 50, rendite: 4, anlageart: 'aktien', quellensteuerProzent: 0 },
+      ],
+    }), ohneKirche);
+    expect(zuviel.anteilSumme).toBe(120);
+    expect(zuviel.hinweise.join(' ')).toMatch(/mehr als das ganze Depot/);
+  });
+
+  it('skaliert alle Positionen anteilig, wenn das Depot wächst', () => {
+    const klein = berechneDividende(gemischt({ portfolio: 100_000 }), ohneKirche);
+    const gross = berechneDividende(gemischt({ portfolio: 300_000 }), ohneKirche);
+    expect(gross.bruttoJahr).toBeCloseTo(klein.bruttoJahr * 3, 2);
+    expect(gross.positionen[0]!.depotwert).toBe(210_000);
+    // Netto wächst unterproportional: Der Pauschbetrag wirkt nur einmal.
+    expect(gross.nettoJahr).toBeLessThan(klein.nettoJahr * 3);
+  });
+
+  it('findet den nötigen Depotwert bei gemischter Aufteilung', () => {
+    const noetig = portfolioFuerNetto(1500, gemischt(), ohneKirche);
+    expect(noetig).not.toBeNull();
+    const geprueft = berechneDividende(gemischt({ portfolio: noetig! }), ohneKirche);
+    expect(geprueft.nettoMonat).toBeCloseTo(1500, 0);
+  });
+
+  it('kommt mit einem leeren Depot zurecht', () => {
+    const r = berechneDividende(gemischt({ positionen: [] }), ohneKirche);
+    expect(r.bruttoJahr).toBe(0);
+    expect(r.nettoJahr).toBe(0);
+    expect(portfolioFuerNetto(1000, gemischt({ positionen: [] }), ohneKirche)).toBeNull();
+  });
+
+  it('summiert Anteile für die Anzeige', () => {
+    expect(anteilSumme([
+      { id: 'a', name: '', anteil: 70, rendite: 1, anlageart: 'aktien', quellensteuerProzent: 0 },
+      { id: 'b', name: '', anteil: 30, rendite: 1, anlageart: 'aktien', quellensteuerProzent: 0 },
+    ])).toBe(100);
+    expect(anteilSumme([])).toBe(0);
   });
 });

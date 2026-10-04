@@ -1,7 +1,7 @@
 {
-  "name": "finpal — Brutto-Netto- und Teilzeit-Rechner",
+  "name": "finpal — Finanzrechner für Deutschland",
   "short_name": "finpal",
-  "description": "Brutto-Netto- und Teilzeit-Rechner für Deutschland. Rechnet vollständig lokal im Browser.",
+  "description": "Brutto-Netto, Teilzeit, Haushalts-Geldfluss und Dividenden. Rechnet vollständig lokal im Browser.",
   "lang": "de",
   "start_url": "./",
   "scope": "./",
